@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import {logger } from "../logger/AgentLogger"
 const executeCommandInputSchema = z.object({
     command: z
         .string()
@@ -59,6 +59,7 @@ export class ExecutionManager {
         // this method is reached. Here we only guarantee the sandbox is up.
         await this.ensureSandbox();
 
+        logger.info(`[Docker Exec] Running: ${parsed.command} ${parsed.args.join(" ")}`);
         const dockerArgs = [
             "compose",
             "exec",
@@ -193,6 +194,7 @@ export class ExecutionManager {
                 `Failed to start sandbox service (exit ${upExit}).\nstdout: ${upOut}\nstderr: ${upErr}`,
             );
         }
+          logger.info("[Docker Sandbox] Container started successfully");
         this.startedThisSession = true;
     }
 

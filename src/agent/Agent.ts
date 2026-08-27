@@ -1,23 +1,25 @@
 import { type Message } from "./Message";
 import { type LLMProvider } from "../providers/LLMProvider";
 import type { ToolRegistry } from "../tools/ToolRegistry";
-import type { ExecutionManager } from "../tools/ExecutionManager";
+import { type ExecutionManager } from "../tools/ExecutionManager";
 import { streamGemini } from "../providers/GeminiStreaming";
 import { type GuardrailContext } from "../guardrails/types/GuardrailContext";
 import { InputGuardrails } from "../guardrails/input/InputGuardrails";
 import { OutputGuardrails } from "../guardrails/output/OutputGuardrails";
+import { logger } from "../logger/AgentLogger";
+import { sandboxManager } from "../tools/ExecutionManager";
 
 export class Agent {
     private llm: LLMProvider;
     private registry: ToolRegistry;
-    private sandbox?: ExecutionManager;
+    private sandbox: ExecutionManager;
     private messages: Message[] = [];
     private maxSteps: number;
     private name: string;
     private inputGuardrails: InputGuardrails;
     private outputGuardrails: OutputGuardrails;
 
-    constructor(llm: LLMProvider, registry: ToolRegistry, maxSteps: number = 60, name: string = "Agent", sandbox?: ExecutionManager) {
+    constructor(llm: LLMProvider, registry: ToolRegistry, maxSteps: number = 60, name: string = "Agent", sandbox: ExecutionManager=sandboxManager) {
         this.llm = llm;
         this.registry = registry;
         this.maxSteps = maxSteps;
@@ -49,6 +51,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
 
     async run(content: string) {
         const runID = crypto.randomUUID();
+        logger.info("Starting agent...", { runID, agentName: this.name });
         const context: GuardrailContext = {
             agentName: this.name,
             input: content,
@@ -65,7 +68,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
         try {
             
             this.messages.push({ runID, role: "user", content: content });
-            console.log("Message:\n", this.messages[this.messages.length - 1]);
+            logger.info(content);
             const tools = this.registry.getAllTools();
             let stepCount = 0;
 
@@ -86,6 +89,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
 
                 // Reflect on plan
                 if (response.toolcalls && response.toolcalls.length > 0) {
+                    logger.info("Tools to be executed: " + response.toolcalls.map(tc => tc.name).join(", "));
                     const reflection = await this.reflectOnPlan(response);
                     if (!reflection.isGood) {
                         this.messages.push({
@@ -127,6 +131,8 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                         result = `Error executing tool: ${error instanceof Error ? error.message : String(error)}`;
                     }
 
+                    logger.info(`Tool ${toolCall.name} executed`);
+
                     this.messages.push({
                         role: "tool",
                         parts: [
@@ -140,7 +146,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                     });
                 }
             }
-
+            logger.error(`Agent exceeded maximum execution step limit of ${this.maxSteps}.`);
             throw new Error(`Agent exceeded maximum execution step limit of ${this.maxSteps}.`);
         } finally {
             // Reliable sandbox teardown: runs on success, on the maxSteps throw
@@ -152,7 +158,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                 try {
                     await this.sandbox.stop();
                 } catch (error) {
-                    console.warn("Failed to stop sandbox during cleanup:",
+                    logger.warn("Failed to stop sandbox during cleanup:",
                         error instanceof Error ? error.message : String(error));
                 }
             }

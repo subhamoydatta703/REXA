@@ -75,13 +75,19 @@ const commandPolicy: CommandPolicy = {
 
 type Validation = "safe" | "blocked" | "confirmation_required";
 
-function validateCommand(command: string): Validation {
+function validateCommand(command: string, args: string[] = []): Validation {
     const cmd = command.trim().toLowerCase();
 
     if (commandPolicy.blocked.includes(cmd)) {
         return "blocked";
     }
-
+    const hasEvalFlag = args.some(arg => 
+        ["-e", "-c", "--eval", "--print", "-p"].includes(arg.trim())
+    );
+    if (hasEvalFlag) {
+        return "confirmation_required";
+    }
+    
     if (commandPolicy.safe.includes(cmd)) {
         return "safe";
     }
