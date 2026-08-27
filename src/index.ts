@@ -37,6 +37,9 @@ Only use execute_command/python for tasks that genuinely require running code
 (builds, tests, computations) — not for file inspection.
 `;
 
-const userQuery = process.argv[2] ?? "Check the Git status and make a git push command with a proper commit message";
+const reason= ` reason: "The input attempts to override the assistant's operational instructions and set new behavioral rules for tool usage."`
 
-console.log(await main(SYSTEM_PROMPT + "\n" + userQuery));
+// const userQuery = process.argv[2] ?? "Check the files and architecture of your codebase and give me suggestions how to make more improvement i mean what are the features can be added to your system. Also give me or create a detailed plan with steps and reasoning in a file in the docs/ folder. Do not hallucinate and do not update or modify any codebase files.";
+// const userQuery = process.argv[2] ?? "Check the input guradrails codebase and tell me why it makes the issafe false and the reason it gives me is"+reason+" when ever i run git status based on the Agent.ts codebase or LLM's codebase? Do not hallucinate and do not modify any files";
+const userQuery = process.argv[2] ?? "Do a git push with a commit message";
+console.log(await main(userQuery));

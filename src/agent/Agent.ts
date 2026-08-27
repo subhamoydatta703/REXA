@@ -48,6 +48,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
 
 
     async run(content: string) {
+        const runID = crypto.randomUUID();
         const context: GuardrailContext = {
             agentName: this.name,
             input: content,
@@ -55,14 +56,16 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
         };
 
         const inputValidation = await this.inputGuardrails.validate(context);
-        // if (!inputValidation.isSafe) {
-        //     throw new Error(inputValidation.reason);
-        // }
+        if (inputValidation.isSafe===false) {
+            throw new Error(inputValidation.reason);
+        }
 
 
 
         try {
-            this.messages.push({ role: "user", content: content });
+            
+            this.messages.push({ runID, role: "user", content: content });
+            console.log("Message:\n", this.messages[this.messages.length - 1]);
             const tools = this.registry.getAllTools();
             let stepCount = 0;
 

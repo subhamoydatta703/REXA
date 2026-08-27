@@ -39,7 +39,7 @@ export class InputGuardrails {
         // and give result
 
         const llmResult = await this.inputGuardrail(context.input);
-        if (!llmResult.isSafe) {
+        if (llmResult.isSafe===false) {
             return {
                 isSafe: false,
                 reason: llmResult.reason,
@@ -86,4 +86,3 @@ private inputGuardrail = async (userQuery: string): Promise<GuardrailResult> => 
 
 
 }
-
