@@ -2,7 +2,7 @@
 import { Agent } from "./agent/Agent";
 import { GeminiProvider } from "./providers/GeminiProvider";
 import { codeTool, codingContextTool } from "./tools/CodingTools";
-import { gitStatus } from "./tools/GitTools";
+import { gitCommand } from "./tools/GitTools";
 import { executeCommand } from "./tools/executeTools";
 import { ToolRegistry } from "./tools/ToolRegistry";
 import { getProjectTree } from "./tools/FileTools";
@@ -11,7 +11,7 @@ import { CLI } from "./cli/AgentCLI";
 
 const llm = new GeminiProvider(process.env.GOOGLE_GEMINI_API_KEY!);
 const toolRegistry = new ToolRegistry();
-toolRegistry.registerTool(gitStatus);
+toolRegistry.registerTool(gitCommand);
 toolRegistry.registerTool(codingContextTool);
 toolRegistry.registerTool(codeTool);
 toolRegistry.registerTool(executeCommand);
