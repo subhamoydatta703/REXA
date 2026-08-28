@@ -65,7 +65,7 @@ The main model key can also be entered interactively on first launch and is stor
 ## Installation
 
 ```bash
-git clone https://github.com/<your-account>/<your-repository>.git
+git clone https://github.com/subhamoydatta703/Agent-ADK.git
 cd my_agent_adk
 bun install
 ```
@@ -321,4 +321,4 @@ REXA was created by **Subhamoy Datta** as a complete agent harness for practical
 
 ## License
 
-No license has been declared yet. Add a license before distributing this project or accepting external contributions.
+This project is licensed under the [MIT License](./LICENSE).

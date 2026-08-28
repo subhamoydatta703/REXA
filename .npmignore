@@ -1,0 +1,14 @@
+.env
+.env.*
+.git/
+.gitignore
+node_modules/
+bun.lock
+docs/
+coverage/
+*.lcov
+*.tgz
+*.log
+.idea/
+.DS_Store
+.agents/

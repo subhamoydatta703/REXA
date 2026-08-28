@@ -1,8 +1,39 @@
 {
-  "name": "my_agent_adk",
+  "name": "rexa-agent",
+  "version": "1.0.0",
+  "description": "REXA — a general-purpose, single-agent development harness that understands tasks, gathers context, plans solutions, writes code, runs checks, and reports results through one continuous conversation.",
   "module": "index.ts",
   "type": "module",
-  "private": true,
+  "license": "MIT",
+  "author": "Subhamoy Datta",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/subhamoydatta703/Agent-ADK.git"
+  },
+  "homepage": "https://github.com/subhamoydatta703/Agent-ADK#readme",
+  "bugs": {
+    "url": "https://github.com/subhamoydatta703/Agent-ADK/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "cli",
+    "gemini",
+    "autonomous-coding",
+    "developer-tools",
+    "rexa"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "src/",
+    "LICENSE",
+    "README.md",
+    "package.json",
+    "tsconfig.json",
+    "docker-compose.yaml",
+    "sandbox.Dockerfile"
+  ],
   "scripts": {
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
@@ -10,7 +41,7 @@
     "rexa": "bun run src/index.ts"
   },
   "bin": {
-    "rexa": "./src/index.ts"
+    "rexa": "src/index.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
