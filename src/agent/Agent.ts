@@ -104,7 +104,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
 
     async run(content: string) {
         const runID = crypto.randomUUID();
-        logger.info("Starting agent...", { runID, agentName: this.name });
+        logger.debug(`Agent run started`, { runID, agent: this.name });
         const context: GuardrailContext = {
             agentName: this.name,
             input: content,
@@ -121,7 +121,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
         try {
 
             this.messages.push({ agentName: this.name, runID, role: "user", content: content });
-            logger.info(content);
+            logger.debug(`User input received`, { length: content.length });
             const tools = this.registry.getAllTools();
             let stepCount = 0;
 
@@ -144,7 +144,9 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
 
                 // Reflect on plan
                 if (response.toolcalls && response.toolcalls.length > 0) {
-                    logger.info("Tools to be executed: " + response.toolcalls.map(tc => tc.name).join(", "));
+                    for (const tc of response.toolcalls) {
+                        logger.tool(tc.name, "running");
+                    }
                     const reflection = await this.reflectOnPlan(response);
                     if (!reflection.isGood) {
                         this.messages.push({
@@ -186,7 +188,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                         result = `Error executing tool: ${error instanceof Error ? error.message : String(error)}`;
                     }
 
-                    logger.info(`Tool ${toolCall.name} executed`);
+                    logger.tool(toolCall.name, "done");
 
                     this.messages.push({
                         role: "tool",
@@ -201,7 +203,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                     });
                 }
             }
-            logger.error(`Agent exceeded maximum execution step limit of ${this.maxSteps}.`);
+            logger.error(`Agent exceeded maximum step limit (${this.maxSteps})`);
             throw new Error(`Agent exceeded maximum execution step limit of ${this.maxSteps}.`);
         } finally {
             // Reliable sandbox teardown: runs on success, on the maxSteps throw
@@ -213,7 +215,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                 try {
                     await this.sandbox.stop();
                 } catch (error) {
-                    logger.warn("Failed to stop sandbox during cleanup:",
+                    logger.warn("Failed to stop sandbox during cleanup",
                         error instanceof Error ? error.message : String(error));
                 }
             }

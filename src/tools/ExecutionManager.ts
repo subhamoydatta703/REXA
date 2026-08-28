@@ -15,7 +15,7 @@ const executeCommandInputSchema = z.object({
         .number()
         .int()
         .positive()
-        .max(300_000) // hard cap: commands may not run for more than 5 minutes
+        .max(300_000) 
         .optional()
         .describe("Optional hard execution timeout in milliseconds (default 60_000)."),
 });
@@ -35,22 +35,11 @@ export interface ExecutionResult {
 const DEFAULT_TIMEOUT_MS = 60_000;
 const SERVICE_NAME = "sandbox";
 
-/**
- * Owns the Docker sandbox lifecycle and the structured execution of commands
- * inside it.
- *
- * Lifecycle model:
- * - A single sandbox survives for the duration of one agent task/session and is
- *   shared across every execute_command call in that task.
- * - `ensureSandbox()` checks the *real* Docker Compose state instead of trusting
- *   an in-memory boolean, and only starts the stack when it is not actually up.
- * - `stop()` tears the sandbox down and must be called exactly once when the
- *   task finishes, fails, is cancelled, or times out.
- */
+
 export class ExecutionManager {
-    /** True once this session has brought the stack up; drives stop() cleanup. */
+    
     private startedThisSession = false;
-    /** Smallest allowed unit of work: a single command run inside the sandbox. */
+    
     async execute(input: ExecuteCommandInput): Promise<ExecutionResult> {
         const parsed = executeCommandInputSchema.parse(input);
         const timeoutMs = parsed.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -59,7 +48,7 @@ export class ExecutionManager {
         // this method is reached. Here we only guarantee the sandbox is up.
         await this.ensureSandbox();
 
-        logger.info(`[Docker Exec] Running: ${parsed.command} ${parsed.args.join(" ")}`);
+        logger.info(`Docker exec: ${parsed.command} ${parsed.args.join(" ")}`);
         const dockerArgs = [
             "compose",
             "exec",
@@ -82,10 +71,7 @@ export class ExecutionManager {
             new Response(proc.stderr).text().then(resolve).catch(() => resolve(""));
         });
 
-        // Hard execution timeout. A cancellable timer races the process: on
-        // timeout we kill the process (so a runaway command cannot linger) and
-        // resolve a sentinel; on early exit the timer is cleared so the caller
-        // is never made to wait the remaining duration.
+        // Hard execution timeout
         let timedOut = false;
         let timerId: ReturnType<typeof setTimeout> | undefined;
         const timeoutSignal = new Promise<void>((resolve) => {
@@ -94,7 +80,7 @@ export class ExecutionManager {
                 try {
                     proc.kill();
                 } catch {
-                    // Already exited; nothing to do.
+                    
                 }
                 resolve();
             }, timeoutMs);
@@ -110,7 +96,7 @@ export class ExecutionManager {
                 try {
                     await proc.exited;
                 } catch {
-                    // Best-effort; ignore.
+                    
                 }
             },
         );
@@ -144,11 +130,8 @@ export class ExecutionManager {
         };
 }
 
-    /**
-     * Ensure the sandbox service is up, inspecting the actual Docker Compose
-     * state. Does nothing (and returns quickly) when it is already running, so
-     * multiple execute_command calls in one task reuse the same container.
-     */
+    
+    //   Ensure the sandbox service is up
     async ensureSandbox(): Promise<void> {
         // Check real state: list the container(s) for the service.
         const ps = Bun.spawn(["docker", "compose", "ps", "-q", SERVICE_NAME], {
@@ -194,15 +177,13 @@ export class ExecutionManager {
                 `Failed to start sandbox service (exit ${upExit}).\nstdout: ${upOut}\nstderr: ${upErr}`,
             );
         }
-          logger.info("[Docker Sandbox] Container started successfully");
+          logger.info("Sandbox container started");
         this.startedThisSession = true;
     }
 
-    /**
-     * Stop and remove the sandbox stack — but only if this session actually
-     * brought it up. Safe to call multiple times; missing / already-stopped
-     * stacks, or pre-existing stacks not created here, are left untouched.
-     */
+    
+    //   Stop and remove the sandbox stack — but only if this session actually
+    //   brought it up
     async stop(): Promise<void> {
         if (!this.startedThisSession) {
             return;
@@ -218,5 +199,5 @@ export class ExecutionManager {
     }
 }
 
-/** Shared singleton used by the execute_command tool and the Agent lifecycle. */
+//   Shared singleton used by the execute_command tool and the Agent lifecycle. 
 export const sandboxManager = new ExecutionManager();

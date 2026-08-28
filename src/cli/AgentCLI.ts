@@ -1,38 +1,40 @@
-import readline from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
-import { Agent } from "../agent/Agent";
+import type { Agent } from "../agent/Agent";
+import { AgentUI } from "./AgentUI";
 
 export class CLI {
-    private rl = readline.createInterface({
-        input,
-        output,
-    });
+    constructor(private agent: Agent) {}
 
+    async start() {
+        AgentUI.displayBanner();
 
-    constructor(private agent: Agent) { }
-    
-       async start() {
         while (true) {
-            const userInput = await this.rl.question(">> Yo!! It's me... REXA.... Sooo, what's the plan, man?\n>> ");
-
-            if (
-                userInput.trim().toLowerCase() === "exit" ||
-                userInput.trim().toLowerCase() === "quit" ||
-                userInput.trim().toLowerCase() === "q"    ||
-                userInput.trim().toLowerCase() === "e"
-            ) {
+            let userInput: string;
+            try {
+                userInput = await AgentUI.getPromptInput();
+            } catch {
+                AgentUI.renderExit();
                 break;
             }
-            
-            const output = await this.agent.run(userInput);
-            const cleaned = output!.text?.replace(/^\s*\*\s*/gm, "")
-                                         .replace(/\*\*/g, "")
-                                         .replace(/`/g, "");
-            console.log("AI AGENT: \n" + cleaned);
+
+            const trimmed = userInput.trim().toLowerCase();
+            // Only exit on explicit exit/quit commands
+            if (["exit", "quit"].includes(trimmed)) {
+                AgentUI.renderExit();
+                break;
+            }
+
+            if (!trimmed) continue;
+
+            const spinner = AgentUI.startSpinner();
+
+            try {
+                const response = await this.agent.run(userInput);
+                spinner.stop();
+                AgentUI.renderResponse(response?.text || "");
+            } catch (error: any) {
+                spinner.fail("Execution error.");
+                AgentUI.renderError(error);
+            }
         }
-
-        this.rl.close();
     }
-
 }
-

@@ -95,18 +95,18 @@ function validateCommand(command: string, args: string[] = []): Validation {
     return "confirmation_required";
 }
 
+import { confirm } from "@inquirer/prompts";
+
 async function askForConfirmation(command: string, args: string[]): Promise<boolean> {
-    const rl = createInterface({
-        input: process.stdin,
-        output: process.stdout,
-    });
-
     const display = [command, ...args].join(" ");
-    const answer = await rl.question(`Run "${display}"? (Y/N): `);
-
-    rl.close();
-
-    return answer.trim().toLowerCase() === "y";
+    try {
+        return await confirm({
+            message: `Run "${display}"?`,
+            default: true,
+        });
+    } catch {
+        return false;
+    }
 }
 
 function blockedResponse(command: string) {

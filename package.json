@@ -10,19 +10,32 @@
     "rexa": "bun run src/index.ts"
   },
   "bin": {
-  "rexa": "./src/index.ts"
-},
-
+    "rexa": "./src/index.ts"
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/figlet": "^1.7.0",
+    "@types/gradient-string": "^1.1.6",
+    "@types/react": "^19.2.18"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
     "@google/genai": "^2.15.0",
+    "@inquirer/prompts": "^8.7.0",
     "@tavily/core": "^0.7.7",
+    "chalk": "^6.0.0",
+    "cli-highlight": "^2.1.11",
+    "commander": "^15.0.0",
     "dotenv": "^17.4.2",
+    "figlet": "^1.11.4",
+    "gradient-string": "^3.0.0",
+    "ink": "^7.1.1",
+    "marked": "^18.0.11",
+    "marked-terminal": "^7.3.0",
+    "ora": "^9.4.1",
+    "react": "^19.2.8",
     "replace-in-file": "^9.0.0",
     "winston": "^3.19.0",
     "zod": "^4.4.3"
