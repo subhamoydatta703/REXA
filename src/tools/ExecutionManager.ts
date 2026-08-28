@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {logger } from "../logger/AgentLogger"
 import path from "node:path";
+import crypto from "node:crypto";
 const executeCommandInputSchema = z.object({
     command: z
         .string()
@@ -40,12 +41,31 @@ export interface ExecutionResult {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const SERVICE_NAME = "sandbox";
-const PROJECT_ROOT = path.resolve(import.meta.dir, "../..");
+const REXA_ROOT = path.resolve(import.meta.dir, "../..");
+const COMPOSE_FILE = path.join(REXA_ROOT, "docker-compose.yaml");
 
 
 export class ExecutionManager {
-    
+    private readonly targetWorkspace = path.resolve(process.cwd());
+    private readonly composeProjectName = `rexa_${crypto
+        .createHash("sha256")
+        .update(this.targetWorkspace)
+        .digest("hex")
+        .slice(0, 12)}`;
     private startedThisSession = false;
+
+    private get composeArgs(): string[] {
+        return ["compose", "--project-name", this.composeProjectName, "--file", COMPOSE_FILE];
+    }
+
+    private get dockerEnv(): Record<string, string> {
+        return {
+            ...Object.fromEntries(
+                Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+            ),
+            REXA_WORKSPACE: this.targetWorkspace,
+        };
+    }
     
     async execute(input: ExecuteCommandInput): Promise<ExecutionResult> {
         const parsed = executeCommandInputSchema.parse(input);
@@ -57,7 +77,7 @@ export class ExecutionManager {
 
         logger.info(`Docker exec: ${parsed.command} ${parsed.args.join(" ")}`);
         const dockerArgs = [
-            "compose",
+            ...this.composeArgs,
             "exec",
             "-T",
             "-w",
@@ -70,7 +90,8 @@ export class ExecutionManager {
         const proc = Bun.spawn(["docker", ...dockerArgs], {
             stdout: "pipe",
             stderr: "pipe",
-            cwd: PROJECT_ROOT,
+            cwd: REXA_ROOT,
+            env: this.dockerEnv,
         });
 
         // Capture stdout/stderr as they stream in.
@@ -146,10 +167,11 @@ export class ExecutionManager {
     //   Ensure the sandbox service is up
     async ensureSandbox(): Promise<void> {
         // Check real state: list the container(s) for the service.
-        const ps = Bun.spawn(["docker", "compose", "ps", "-q", SERVICE_NAME], {
+        const ps = Bun.spawn(["docker", ...this.composeArgs, "ps", "-q", SERVICE_NAME], {
             stdout: "pipe",
             stderr: "pipe",
-            cwd: PROJECT_ROOT,
+            cwd: REXA_ROOT,
+            env: this.dockerEnv,
         });
         const psOut = await new Response(ps.stdout).text();
         const psErr = await new Response(ps.stderr).text();
@@ -158,7 +180,7 @@ export class ExecutionManager {
         if (psErr.includes("no configuration file") || psErr.includes("no such file")) {
             throw new Error(
                 "Docker Compose sandbox configuration is missing/unreadable. " +
-                    `Cannot run "${SERVICE_NAME}". Check docker-compose.yaml exists next to the project.`,
+                    `Cannot run "${SERVICE_NAME}". Check REXA's bundled docker-compose.yaml is available.`,
             );
         }
 
@@ -167,7 +189,7 @@ export class ExecutionManager {
             // Confirm the found container is actually in a running state.
             const inspect = Bun.spawn(
                 ["docker", "inspect", "-f", "{{.State.Running}}", containerId],
-                { stdout: "pipe", stderr: "pipe", cwd: PROJECT_ROOT },
+                { stdout: "pipe", stderr: "pipe", cwd: REXA_ROOT },
             );
             const running = (await new Response(inspect.stdout).text()).trim() === "true";
             await inspect.exited;
@@ -177,10 +199,11 @@ export class ExecutionManager {
         }
 
         // Not up (or not running): build (if needed) and start it.
-        const up = Bun.spawn(["docker", "compose", "up", "-d", "--build", SERVICE_NAME], {
+        const up = Bun.spawn(["docker", ...this.composeArgs, "up", "-d", "--build", SERVICE_NAME], {
             stdout: "pipe",
             stderr: "pipe",
-            cwd: PROJECT_ROOT,
+            cwd: REXA_ROOT,
+            env: this.dockerEnv,
         });
         const upOut = await new Response(up.stdout).text();
         const upErr = await new Response(up.stderr).text();
@@ -203,10 +226,11 @@ export class ExecutionManager {
             return;
         }
         this.startedThisSession = false;
-        const down = Bun.spawn(["docker", "compose", "down", "--remove-orphans"], {
+        const down = Bun.spawn(["docker", ...this.composeArgs, "down", "--remove-orphans"], {
             stdout: "pipe",
             stderr: "pipe",
-            cwd: PROJECT_ROOT,
+            cwd: REXA_ROOT,
+            env: this.dockerEnv,
         });
         await new Response(down.stdout).text();
         await new Response(down.stderr).text();

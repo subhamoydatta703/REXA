@@ -9,7 +9,9 @@ services:
 
     # Workspace-only mount. The agent can only ever touch this directory tree.
     volumes:
-      - .:/app
+      - type: bind
+        source: ${REXA_WORKSPACE:-.}
+        target: /app
       - sandbox_workspace:/workspace
 
 

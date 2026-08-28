@@ -103,6 +103,15 @@ After linking, start the agent from any directory with:
 rexa
 ```
 
+REXA treats the directory where you run this command as the active project. For example:
+
+```bash
+cd path/to/your/repository
+rexa
+```
+
+File tools and normal Git operations work on that repository. The Docker sandbox mounts it at `/app`; REXA itself does not need to be copied into every project.
+
 If the command is not found, make sure Bun's global binary directory is included in your `PATH`, then restart the terminal. You can confirm the link with:
 
 ```bash
@@ -145,7 +154,7 @@ Avoid passing secrets as command-line arguments when possible because shell hist
 
 ## Docker sandbox
 
-Commands run in the `sandbox` service as a non-root user. The project is mounted at `/app`, while cloned repositories are stored in a separate Docker-managed volume at `/workspace`.
+Commands run in the `sandbox` service as a non-root user. The directory where the user starts `rexa` is mounted at `/app`, while cloned repositories are stored in a separate Docker-managed volume at `/workspace`.
 
 ```bash
 bun run docker:build
