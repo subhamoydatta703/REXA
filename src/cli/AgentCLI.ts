@@ -7,6 +7,7 @@ export class CLI {
 
     async start() {
         AgentUI.displayBanner();
+        AgentUI.displayWorkspace(process.cwd());
 
         while (true) {
             let userInput: string;

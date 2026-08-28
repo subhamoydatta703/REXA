@@ -1,11 +1,42 @@
 import { z } from "zod";
-import { readdir } from "fs/promises";
+import { glob, readdir, realpath } from "node:fs/promises";
 import { type Tool } from "./ToolRegistry";
 import { write } from "bun";
-import { join } from "path";
-import { glob } from "node:fs/promises";
+import path from "node:path";
 import { confirm } from "@inquirer/prompts";
 import { pauseActiveSpinner, resumeActiveSpinner } from "../cli/TerminalState";
+import { sandboxManager } from "./ExecutionManager";
+
+const PROJECT_ROOT = path.resolve(process.cwd());
+
+/** Resolve a tool path inside the project, including when an existing symlink is used. */
+async function resolveProjectPath(userPath: string): Promise<string> {
+    const candidate = path.resolve(PROJECT_ROOT, userPath);
+    const lexicalRelative = path.relative(PROJECT_ROOT, candidate);
+    if (lexicalRelative === ".." || lexicalRelative.startsWith(`..${path.sep}`) || path.isAbsolute(lexicalRelative)) {
+        throw new Error("Path must stay inside the active REXA project.");
+    }
+
+    const canonicalRoot = await realpath(PROJECT_ROOT);
+    let existingAncestor = candidate;
+    while (true) {
+        try {
+            const canonicalAncestor = await realpath(existingAncestor);
+            const realRelative = path.relative(canonicalRoot, canonicalAncestor);
+            if (realRelative === ".." || realRelative.startsWith(`..${path.sep}`) || path.isAbsolute(realRelative)) {
+                throw new Error("Path resolves outside the active REXA project.");
+            }
+            return candidate;
+        } catch (error) {
+            if (error instanceof Error && error.message.includes("active REXA project")) throw error;
+            const parent = path.dirname(existingAncestor);
+            if (parent === existingAncestor) {
+                throw new Error("Unable to resolve a project-relative path.");
+            }
+            existingAncestor = parent;
+        }
+    }
+}
 
 
 // Count files directly inside a directory.
@@ -220,7 +251,7 @@ export const findFile: Tool = {
             findFileSchema.parse(args);
 
         const paths =
-            await getFilePaths(process.cwd());
+            await getFilePaths(PROJECT_ROOT);
 
         const matches =
             paths.filter((filePath) =>
@@ -269,8 +300,7 @@ export const readFile: Tool = {
         const { path } =
             readFileSchema.parse(args);
 
-        const file =
-            Bun.file(path);
+        const file = Bun.file(await resolveProjectPath(path));
 
         if (!(await file.exists())) {
             throw new Error(
@@ -315,10 +345,13 @@ export const readMultipleFiles: Tool = {
             content: string;
         }[] = [];
 
-        for (const path of paths) {
+        const projectPaths = await Promise.all(paths.map(resolveProjectPath));
+        for (let index = 0; index < projectPaths.length; index++) {
+            const filePath = projectPaths[index];
+            const requestedPath = paths[index];
+            if (!filePath || !requestedPath) continue;
             try {
-                const file =
-                    Bun.file(path);
+                const file = Bun.file(filePath);
 
                 if (!(await file.exists())) {
                     continue;
@@ -328,7 +361,7 @@ export const readMultipleFiles: Tool = {
                     await file.text();
 
                 files.push({
-                    path,
+                    path: requestedPath,
                     content
                 });
             } catch {
@@ -363,8 +396,7 @@ export const readDirectory: Tool = {
         const { dir } =
             readDirectorySchema.parse(args);
 
-        const paths =
-            await getFilePaths(dir);
+        const paths = await getFilePaths(await resolveProjectPath(dir));
 
         const files: {
             path: string;
@@ -423,8 +455,7 @@ export const listFiles: Tool = {
         const { dir } =
             listFilesSchema.parse(args);
 
-        const paths =
-            await getFilePaths(dir);
+        const paths = await getFilePaths(await resolveProjectPath(dir));
 
         return {
             files: paths
@@ -451,8 +482,7 @@ export const countFile: Tool = {
         const parsed =
             countFileSchema.parse(args);
 
-        const files =
-            await readdir(parsed.path);
+        const files = await readdir(await resolveProjectPath(parsed.path));
 
         return {
             count: files.length
@@ -487,10 +517,7 @@ export const createFile: Tool = {
         const parsed =
             createFileSchema.parse(args);
 
-        await write(
-            parsed.path,
-            parsed.text
-        );
+        await write(await resolveProjectPath(parsed.path), parsed.text);
 
         return {
             output: "File created successfully"
@@ -522,6 +549,7 @@ export const createAndExecuteFile: Tool = {
     ) => {
         const parsed =
             createAndExecuteFileSchema.parse(args);
+        const projectPath = await resolveProjectPath(parsed.path);
 
         // Reject scripts whose only purpose is listing/inspecting files or
         // directories — that's what list_files / read_directory are for.
@@ -540,35 +568,40 @@ export const createAndExecuteFile: Tool = {
             };
         }
 
-        await write(
-            parsed.path,
-            parsed.code
-        );
+        const spinnerWasActive = pauseActiveSpinner();
+        let approved = false;
+        try {
+            approved = await confirm({
+                message: `Create and execute sandbox script ${parsed.path}?`,
+                default: false,
+            });
+        } finally {
+            resumeActiveSpinner(spinnerWasActive);
+        }
+        if (!approved) {
+            return {
+                success: false,
+                status: "rejected",
+                path: parsed.path,
+                error: "Script creation and execution rejected by the user.",
+            };
+        }
+
+        await write(projectPath, parsed.code);
 
         try {
-            const proc = Bun.spawn(
-                ["bun", "run", parsed.path],
-                {
-                    stdout: "pipe",
-                    stderr: "pipe",
-                }
-            );
-
-            const stdout =
-                await new Response(proc.stdout).text();
-
-            const stderr =
-                await new Response(proc.stderr).text();
-
-            const exitCode =
-                await proc.exited;
+            const result = await sandboxManager.execute({
+                command: "bun",
+                args: ["run", path.relative(PROJECT_ROOT, projectPath)],
+                workdir: "/app",
+            });
 
             return {
-                success: exitCode === 0,
+                success: result.success,
                 path: parsed.path,
-                exitCode,
-                stdout,
-                stderr,
+                exitCode: result.exitCode,
+                stdout: result.stdout,
+                stderr: result.stderr,
             };
         } catch (error) {
             return {
@@ -604,8 +637,8 @@ export const appendFileTool: Tool = {
         const parsed =
             appendFileSchema.parse(args);
 
-        const file =
-            Bun.file(parsed.path);
+        const projectPath = await resolveProjectPath(parsed.path);
+        const file = Bun.file(projectPath);
 
         if (!(await file.exists())) {
             throw new Error(
@@ -621,10 +654,7 @@ export const appendFileTool: Tool = {
             "\n" +
             parsed.text;
 
-        await Bun.write(
-            parsed.path,
-            updatedContent
-        );
+        await Bun.write(projectPath, updatedContent);
 
         return {
             success: true,
@@ -664,8 +694,8 @@ export const editFile: Tool = {
         const parsed =
             editFileSchema.parse(args);
 
-        const file =
-            Bun.file(parsed.path);
+        const projectPath = await resolveProjectPath(parsed.path);
+        const file = Bun.file(projectPath);
 
         if (!(await file.exists())) {
             throw new Error(
@@ -749,10 +779,7 @@ export const editFile: Tool = {
             }
         }
 
-        await Bun.write(
-            parsed.path,
-            updatedContent
-        );
+        await Bun.write(projectPath, updatedContent);
 
         return {
             success: true,
@@ -785,10 +812,7 @@ export const createAndWritePlan: Tool = {
         const parsed =
             createAndWritePlanSchema.parse(args);
 
-        await write(
-            parsed.filePath,
-            parsed.plan
-        );
+        await write(await resolveProjectPath(parsed.filePath), parsed.plan);
 
         return {
             output:
@@ -811,7 +835,7 @@ async function getFilePaths(
 
     for (const entry of entries) {
         const fullPath =
-            join(
+            path.join(
                 dir,
                 entry.name
             );
@@ -857,6 +881,7 @@ export const deleteFile: Tool = {
             deleteFileSchema.parse(args);
 
         const path = parsed.path;
+        const projectPath = await resolveProjectPath(path);
         const spinnerWasActive = pauseActiveSpinner();
         let approved = false;
         try {
@@ -870,7 +895,7 @@ export const deleteFile: Tool = {
         if (!approved) {
             return { success: false, status: "rejected", path, output: "File deletion rejected by the user." };
         }
-        const file = Bun.file(path);
+        const file = Bun.file(projectPath);
 
         await file.delete();
 

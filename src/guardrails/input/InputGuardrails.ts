@@ -70,11 +70,23 @@ private inputGuardrail = async (userQuery: string): Promise<GuardrailResult> => 
         }
 
         const jsonString = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
-        const parsed = JSON.parse(jsonString);
+        const parsed: unknown = JSON.parse(jsonString);
+        if (
+            typeof parsed !== "object" ||
+            parsed === null ||
+            typeof (parsed as { isSafe?: unknown }).isSafe !== "boolean"
+        ) {
+            return {
+                isSafe: false,
+                reason: "Input guardrail returned an invalid classification.",
+            };
+        }
 
         return {
-            isSafe: parsed.safe,
-            reason: parsed.reason,
+            isSafe: (parsed as { isSafe: boolean }).isSafe,
+            reason: typeof (parsed as { reason?: unknown }).reason === "string"
+                ? (parsed as { reason: string }).reason
+                : undefined,
         };
 
 

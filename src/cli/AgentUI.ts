@@ -3,6 +3,8 @@ import chalk from "chalk";
 import figlet from "figlet";
 import gradient from "gradient-string";
 import ora, { type Ora } from "ora";
+import os from "node:os";
+import path from "node:path";
 import { setActiveSpinner } from "./TerminalState";
 
 export class AgentUI {
@@ -44,6 +46,19 @@ export class AgentUI {
         
         console.log("");
         console.log(chalk.bold.yellow("  ❯ ") + chalk.gray("Yo, it's me... ") + chalk.bold.white("REXA") + chalk.gray(". What's the plan?"));
+        console.log("");
+    }
+
+    /** Make the sandbox's host-file boundary visible before the agent starts. */
+    static displayWorkspace(workspace: string): void {
+        const resolved = path.resolve(workspace);
+        const home = path.resolve(os.homedir());
+        const isBroadWorkspace = resolved === home || resolved === path.parse(resolved).root;
+
+        console.log(chalk.gray("  Workspace mounted read/write in sandbox: ") + chalk.white(resolved));
+        if (isBroadWorkspace) {
+            console.log(chalk.yellow("  Warning: start REXA inside a project folder, not your home or drive root."));
+        }
         console.log("");
     }
 

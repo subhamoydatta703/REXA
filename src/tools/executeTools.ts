@@ -101,6 +101,17 @@ function validateCommand(command: string, args: string[] = []): Validation {
     if (["bun", "bunx", "npm", "npx"].includes(cmd) && ["install", "add", "remove", "uninstall", "update", "upgrade", "ci"].includes(args[0]?.trim().toLowerCase() || "")) {
         return "confirmation_required";
     }
+    // Script runners can execute arbitrary project code, make network requests,
+    // and modify files even when their executable name looks familiar.
+    if (["node", "python", "bunx", "npx"].includes(cmd)) {
+        return "confirmation_required";
+    }
+    if (cmd === "bun" && ["run", "x"].includes(args[0]?.trim().toLowerCase() || "")) {
+        return "confirmation_required";
+    }
+    if (cmd === "npm" && ["run", "exec", "publish"].includes(args[0]?.trim().toLowerCase() || "")) {
+        return "confirmation_required";
+    }
     
     if (commandPolicy.safe.includes(cmd)) {
         return "safe";

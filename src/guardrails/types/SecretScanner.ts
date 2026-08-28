@@ -30,7 +30,8 @@ export class SecretScanner {
    */
   public static containsSecret(input: string, entropyThreshold = 4.5): boolean {
     // Check regex patterns
-    for (const [key, pattern] of Object.entries(this.SCAN_PATTERNS)) {
+    for (const pattern of Object.values(this.SCAN_PATTERNS)) {
+      pattern.lastIndex = 0;
       if (pattern.test(input)) {
         return true;
       }
@@ -48,5 +49,15 @@ export class SecretScanner {
     }
 
     return false;
+  }
+
+  /** Redact detectable credentials before they reach terminal logs. */
+  public static redact(input: string): string {
+    let redacted = input;
+    for (const pattern of Object.values(this.SCAN_PATTERNS)) {
+      pattern.lastIndex = 0;
+      redacted = redacted.replace(pattern, "[REDACTED]");
+    }
+    return redacted.replace(/\b(Bearer\s+)[^\s"']+/gi, "$1[REDACTED]");
   }
 }

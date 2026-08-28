@@ -55,16 +55,29 @@ export class ExecutionManager {
     private startedThisSession = false;
 
     private get composeArgs(): string[] {
-        return ["compose", "--project-name", this.composeProjectName, "--file", COMPOSE_FILE];
+        // Short options work across more Docker Compose v2 releases than the
+        // long forms (some installations reject --project-name).
+        return ["compose", "-p", this.composeProjectName, "-f", COMPOSE_FILE];
     }
 
     private get dockerEnv(): Record<string, string> {
-        return {
-            ...Object.fromEntries(
-                Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-            ),
-            REXA_WORKSPACE: this.targetWorkspace,
-        };
+        // This environment is for the Docker client, not the sandbox container.
+        // Compose only needs REXA_WORKSPACE; Docker needs a small set of OS and
+        // Docker-context variables to run correctly on the user's machine.
+        const allowedKeys = [
+            "PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "WINDIR", "ComSpec",
+            "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+            "ALLUSERSPROFILE", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
+            "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "SystemDrive",
+            "TEMP", "TMP", "OS", "USERNAME", "USERDOMAIN", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+            "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
+        ];
+        const dockerEnv: Record<string, string> = { REXA_WORKSPACE: this.targetWorkspace };
+        for (const key of allowedKeys) {
+            const value = process.env[key];
+            if (typeof value === "string") dockerEnv[key] = value;
+        }
+        return dockerEnv;
     }
     
     async execute(input: ExecuteCommandInput): Promise<ExecutionResult> {
