@@ -12,7 +12,7 @@ export class GeminiProvider implements LLMProvider {
         this.client = new GoogleGenAI({ apiKey: apikey });
     }
 
-    async generate(messages: Message[], tools: Tool[]): Promise<LLMResponse> {
+    async generate(messages: Message[], tools: Tool[], systemInstruction?: string): Promise<LLMResponse> {
 
         try {
             if (tools.length === 0) {
@@ -48,6 +48,7 @@ export class GeminiProvider implements LLMProvider {
                 model: "gemini-3.1-flash-lite",
                 contents,
                 config: {
+                    systemInstruction: systemInstruction,
                     toolConfig: {
                         functionCallingConfig: {
                             mode: FunctionCallingConfigMode.AUTO
@@ -60,13 +61,16 @@ export class GeminiProvider implements LLMProvider {
 
             const candidate = response.candidates?.[0];
             const functionCalls = response.functionCalls || [];
-            ;
-            
+            const parts = candidate?.content?.parts ?? [];
+            const extractedText = parts
+                .filter((p): p is Part & { text: string } => typeof (p as any).text === "string")
+                .map(p => p.text)
+                .join("");
 
             return {
                 role: "assistant",
-                text: response.text || "",
-                rawParts: candidate?.content?.parts ?? [],
+                text: extractedText,
+                rawParts: parts,
                 toolcalls: functionCalls
                     .filter(
                         (call): call is typeof call & { name: string } => Boolean(call.name)

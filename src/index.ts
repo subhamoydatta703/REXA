@@ -18,7 +18,7 @@ toolRegistry.registerTool(executeCommand);
 toolRegistry.registerTool(getProjectTree)
 toolRegistry.registerTool(search)
 
-const agent1 = new Agent(llm, toolRegistry, 60, "Agent Bro1");
+const agent1 = new Agent(llm, toolRegistry, 60);
 
 
 const cli = new CLI(agent1);
