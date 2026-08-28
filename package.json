@@ -32,6 +32,7 @@
     "figlet": "^1.11.4",
     "gradient-string": "^3.0.0",
     "ink": "^7.1.1",
+    "keytar": "^7.9.0",
     "marked": "^18.0.11",
     "marked-terminal": "^7.3.0",
     "ora": "^9.4.1",

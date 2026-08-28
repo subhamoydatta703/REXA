@@ -3,10 +3,11 @@ import chalk from "chalk";
 import figlet from "figlet";
 import gradient from "gradient-string";
 import ora, { type Ora } from "ora";
+import { setActiveSpinner } from "./TerminalState";
 
 export class AgentUI {
     
-    private static theme = gradient(["#FFFFFF", "#A1A1AA", "#52525B"]);
+    private static theme = gradient(["#f9f908", "#A1A1AA", "#52525B"]);
     
     private static accentTheme = gradient(["#ffff09ff","#ffff09ff"]);
 
@@ -60,22 +61,21 @@ export class AgentUI {
     // Creates and starts a processing spinner
     
     static startSpinner(): Ora {
-        return ora({
+        const spinner = ora({
             text: chalk.gray("thinking..."),
             spinner: "dots",
             prefixText: " ",
         }).start();
+        setActiveSpinner(spinner);
+        return spinner;
     }
 
     
     //   Renders the agent's response 
     
     static renderResponse(text: string): void {
-        const cleaned = text
-            ?.replace(/^\s*\*\s*/gm, "")
-            .replace(/\*\*/g, "")
-            .replace(/`/g, "")
-            .trim();
+        // Preserve Markdown markers so lists, headings and code remain structured.
+        const cleaned = text?.trim();
 
         if (!cleaned) return;
 

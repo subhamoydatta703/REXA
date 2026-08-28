@@ -1,5 +1,6 @@
 import type { Agent } from "../agent/Agent";
 import { AgentUI } from "./AgentUI";
+import { clearActiveSpinner } from "./TerminalState";
 
 export class CLI {
     constructor(private agent: Agent) {}
@@ -30,9 +31,11 @@ export class CLI {
             try {
                 const response = await this.agent.run(userInput);
                 spinner.stop();
+                clearActiveSpinner(spinner);
                 AgentUI.renderResponse(response?.text || "");
             } catch (error: any) {
                 spinner.fail("Execution error.");
+                clearActiveSpinner(spinner);
                 AgentUI.renderError(error);
             }
         }

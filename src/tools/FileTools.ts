@@ -4,6 +4,8 @@ import { type Tool } from "./ToolRegistry";
 import { write } from "bun";
 import { join } from "path";
 import { glob } from "node:fs/promises";
+import { confirm } from "@inquirer/prompts";
+import { pauseActiveSpinner, resumeActiveSpinner } from "../cli/TerminalState";
 
 
 // Count files directly inside a directory.
@@ -855,6 +857,19 @@ export const deleteFile: Tool = {
             deleteFileSchema.parse(args);
 
         const path = parsed.path;
+        const spinnerWasActive = pauseActiveSpinner();
+        let approved = false;
+        try {
+            approved = await confirm({
+                message: `Delete file ${path}?`,
+                default: false,
+            });
+        } finally {
+            resumeActiveSpinner(spinnerWasActive);
+        }
+        if (!approved) {
+            return { success: false, status: "rejected", path, output: "File deletion rejected by the user." };
+        }
         const file = Bun.file(path);
 
         await file.delete();

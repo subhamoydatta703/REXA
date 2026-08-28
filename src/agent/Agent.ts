@@ -144,9 +144,6 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
 
                 // Reflect on plan
                 if (response.toolcalls && response.toolcalls.length > 0) {
-                    for (const tc of response.toolcalls) {
-                        logger.tool(tc.name, "running");
-                    }
                     const reflection = await this.reflectOnPlan(response);
                     if (!reflection.isGood) {
                         this.messages.push({
@@ -181,14 +178,37 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                         });
                         continue;
                     }
+
+                    const params = (toolCall.params || {}) as Record<string, any>;
+                    let paramDetail = "";
+                    if (toolCall.name === "execute_command") {
+                        const cmd = String(params.command || "");
+                        let args = Array.isArray(params.args) ? params.args.join(" ") : String(params.args || "");
+                        if (cmd && args.startsWith(cmd + " ")) {
+                            args = args.substring(cmd.length + 1);
+                        } else if (cmd && args === cmd) {
+                            args = "";
+                        }
+                        paramDetail = `[${cmd}${args ? " " + args : ""}]`.trim();
+                    } else if (toolCall.name === "search") {
+                        paramDetail = `[query: "${params.query || ""}"]`;
+                    } else if (toolCall.name === "git_command") {
+                        const args = Array.isArray(params.args) ? params.args.join(" ") : String(params.command || "");
+                        paramDetail = `[git ${args}]`.trim();
+                    }
+
+                    logger.tool(toolCall.name, "running", paramDetail);
+                    const startTime = Date.now();
+
                     let result;
                     try {
-                        result = await tool.execute(toolCall.params || {});
+                        result = await tool.execute(params);
                     } catch (error) {
                         result = `Error executing tool: ${error instanceof Error ? error.message : String(error)}`;
                     }
 
-                    logger.tool(toolCall.name, "done");
+                    const duration = ((Date.now() - startTime) / 1000).toFixed(1) + "s";
+                    logger.tool(toolCall.name, "done", `(${duration})`);
 
                     this.messages.push({
                         role: "tool",

@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { Tool } from "./ToolRegistry";
 import { createInterface } from "node:readline/promises";
 import { sandboxManager } from "./ExecutionManager";
+import { gitRequiresConfirmation } from "./CommandPolicy";
+import { pauseActiveSpinner, resumeActiveSpinner } from "../cli/TerminalState";
 
 const executeSchema = z.object({
     command: z
@@ -28,6 +30,10 @@ const executeSchema = z.object({
             "Optional hard execution timeout in milliseconds. Defaults to 60_000 (1 minute). " +
             "Exceeding the timeout kills the command and returns a clear timeout error."
         ),
+    workdir: z
+        .enum(["/app", "/workspace"])
+        .default("/app")
+        .describe("Sandbox-only working directory. Use /workspace for cloned repositories."),
 });
 
 export type CommandPolicy = {
@@ -87,6 +93,14 @@ function validateCommand(command: string, args: string[] = []): Validation {
     if (hasEvalFlag) {
         return "confirmation_required";
     }
+
+    // Safe executables still require confirmation for state-changing operations.
+    if (cmd === "git" && gitRequiresConfirmation(args)) {
+        return "confirmation_required";
+    }
+    if (["bun", "bunx", "npm", "npx"].includes(cmd) && ["install", "add", "remove", "uninstall", "update", "upgrade", "ci"].includes(args[0]?.trim().toLowerCase() || "")) {
+        return "confirmation_required";
+    }
     
     if (commandPolicy.safe.includes(cmd)) {
         return "safe";
@@ -99,13 +113,16 @@ import { confirm } from "@inquirer/prompts";
 
 async function askForConfirmation(command: string, args: string[]): Promise<boolean> {
     const display = [command, ...args].join(" ");
+    const spinnerWasActive = pauseActiveSpinner();
     try {
         return await confirm({
             message: `Run "${display}"?`,
-            default: true,
+            default: false,
         });
     } catch {
         return false;
+    } finally {
+        resumeActiveSpinner(spinnerWasActive);
     }
 }
 
@@ -150,7 +167,7 @@ export const executeCommand: Tool = {
     execute: async (args: z.infer<typeof executeSchema>) => {
         const parsed = executeSchema.parse(args);
         const command = parsed.command.trim();
-        const validation = validateCommand(command);
+        const validation = validateCommand(command, parsed.args);
 
         if (validation === "blocked") {
             return blockedResponse(command);
@@ -176,6 +193,7 @@ export const executeCommand: Tool = {
                 command,
                 args: parsed.args,
                 timeoutMs: parsed.timeoutMs,
+                workdir: parsed.workdir,
             });
 
             return {
@@ -186,6 +204,7 @@ export const executeCommand: Tool = {
                 exitCode: result.exitCode,
                 stdout: result.stdout,
                 stderr: result.stderr,
+                workdir: result.workdir,
                 hint:
                     result.status === "timeout"
                         ? "The command was killed because it exceeded the execution timeout. " +

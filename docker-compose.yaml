@@ -10,12 +10,13 @@ services:
     # Workspace-only mount. The agent can only ever touch this directory tree.
     volumes:
       - .:/app
+      - sandbox_workspace:/workspace
 
 
     # Run as a non-root user (the "bun" user in the image is UID 1000).
     user: "1000:1000"
 
-    # No network access at all.
+    
     # network_mode: "none"
 
     # Drop every Linux capability.
@@ -39,3 +40,6 @@ services:
 
     # Keep the container alive so `docker compose exec` can run commands in it.
     command: ["tail", "-f", "/dev/null"]
+
+volumes:
+  sandbox_workspace:

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {logger } from "../logger/AgentLogger"
+import path from "node:path";
 const executeCommandInputSchema = z.object({
     command: z
         .string()
@@ -18,6 +19,10 @@ const executeCommandInputSchema = z.object({
         .max(300_000) 
         .optional()
         .describe("Optional hard execution timeout in milliseconds (default 60_000)."),
+    workdir: z
+        .enum(["/app", "/workspace"])
+        .default("/app")
+        .describe("Sandbox-only working directory. Use /workspace for cloned repositories."),
 });
 
 type ExecuteCommandInput = z.infer<typeof executeCommandInputSchema>;
@@ -30,10 +35,12 @@ export interface ExecutionResult {
     exitCode: number | null;
     stdout: string;
     stderr: string;
+    workdir: "/app" | "/workspace";
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const SERVICE_NAME = "sandbox";
+const PROJECT_ROOT = path.resolve(import.meta.dir, "../..");
 
 
 export class ExecutionManager {
@@ -53,6 +60,8 @@ export class ExecutionManager {
             "compose",
             "exec",
             "-T",
+            "-w",
+            parsed.workdir,
             SERVICE_NAME,
             parsed.command,
             ...parsed.args,
@@ -61,6 +70,7 @@ export class ExecutionManager {
         const proc = Bun.spawn(["docker", ...dockerArgs], {
             stdout: "pipe",
             stderr: "pipe",
+            cwd: PROJECT_ROOT,
         });
 
         // Capture stdout/stderr as they stream in.
@@ -116,6 +126,7 @@ export class ExecutionManager {
                     stderr ||
                     `Command timed out after ${timeoutMs}ms and was killed. ` +
                         "The sandbox is still intact and ready for the next command.",
+                workdir: parsed.workdir,
             };
         }
 
@@ -127,6 +138,7 @@ export class ExecutionManager {
             exitCode: typeof exitCode === "number" ? exitCode : 1,
             stdout,
             stderr,
+            workdir: parsed.workdir,
         };
 }
 
@@ -137,6 +149,7 @@ export class ExecutionManager {
         const ps = Bun.spawn(["docker", "compose", "ps", "-q", SERVICE_NAME], {
             stdout: "pipe",
             stderr: "pipe",
+            cwd: PROJECT_ROOT,
         });
         const psOut = await new Response(ps.stdout).text();
         const psErr = await new Response(ps.stderr).text();
@@ -154,7 +167,7 @@ export class ExecutionManager {
             // Confirm the found container is actually in a running state.
             const inspect = Bun.spawn(
                 ["docker", "inspect", "-f", "{{.State.Running}}", containerId],
-                { stdout: "pipe", stderr: "pipe" },
+                { stdout: "pipe", stderr: "pipe", cwd: PROJECT_ROOT },
             );
             const running = (await new Response(inspect.stdout).text()).trim() === "true";
             await inspect.exited;
@@ -167,6 +180,7 @@ export class ExecutionManager {
         const up = Bun.spawn(["docker", "compose", "up", "-d", "--build", SERVICE_NAME], {
             stdout: "pipe",
             stderr: "pipe",
+            cwd: PROJECT_ROOT,
         });
         const upOut = await new Response(up.stdout).text();
         const upErr = await new Response(up.stderr).text();
@@ -192,6 +206,7 @@ export class ExecutionManager {
         const down = Bun.spawn(["docker", "compose", "down", "--remove-orphans"], {
             stdout: "pipe",
             stderr: "pipe",
+            cwd: PROJECT_ROOT,
         });
         await new Response(down.stdout).text();
         await new Response(down.stderr).text();
