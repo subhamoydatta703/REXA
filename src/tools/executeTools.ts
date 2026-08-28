@@ -2,8 +2,8 @@ import { z } from "zod";
 import type { Tool } from "./ToolRegistry";
 import { createInterface } from "node:readline/promises";
 import { sandboxManager } from "./ExecutionManager";
-import { gitRequiresConfirmation } from "./CommandPolicy";
 import { pauseActiveSpinner, resumeActiveSpinner } from "../cli/TerminalState";
+import { getGitOperation, validateSandboxedGitClone } from "./CommandPolicy";
 
 const executeSchema = z.object({
     command: z
@@ -95,7 +95,7 @@ function validateCommand(command: string, args: string[] = []): Validation {
     }
 
     // Safe executables still require confirmation for state-changing operations.
-    if (cmd === "git" && gitRequiresConfirmation(args)) {
+    if (cmd === "git") {
         return "confirmation_required";
     }
     if (["bun", "bunx", "npm", "npx"].includes(cmd) && ["install", "add", "remove", "uninstall", "update", "upgrade", "ci"].includes(args[0]?.trim().toLowerCase() || "")) {
@@ -167,6 +167,22 @@ export const executeCommand: Tool = {
     execute: async (args: z.infer<typeof executeSchema>) => {
         const parsed = executeSchema.parse(args);
         const command = parsed.command.trim();
+        const workdir = command.toLowerCase() === "git" && getGitOperation(parsed.args) === "clone"
+            ? "/workspace"
+            : parsed.workdir;
+        const cloneValidation = command.toLowerCase() === "git" && getGitOperation(parsed.args) === "clone"
+            ? validateSandboxedGitClone(parsed.args)
+            : undefined;
+        if (cloneValidation) {
+            return {
+                success: false,
+                status: "rejected",
+                command,
+                args: parsed.args,
+                workdir,
+                message: cloneValidation,
+            };
+        }
         const validation = validateCommand(command, parsed.args);
 
         if (validation === "blocked") {
@@ -193,7 +209,7 @@ export const executeCommand: Tool = {
                 command,
                 args: parsed.args,
                 timeoutMs: parsed.timeoutMs,
-                workdir: parsed.workdir,
+                workdir,
             });
 
             return {

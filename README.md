@@ -24,7 +24,7 @@ For example, a request to fix a bug can cause REXA to:
 - File discovery, reading, creation, editing, deletion, appending, counting, and project-tree tools.
 - Grounded coding context that returns the current file contents after modifications.
 - Sandboxed command execution with timeouts and command guardrails.
-- Git clone, status, diff, branch, commit, pull, push, and other Git operations inside Docker; the current project is `/app` and cloned repositories use `/workspace`.
+- Git clone, status, diff, branch, commit, pull, push, and other Git operations with explicit approval; current-project Git uses the host credentials, while clones use Docker's private `/workspace` volume.
 - Tavily search when configured, with GitHub, DuckDuckGo, and webpage fallbacks.
 - Input and output guardrails plus secret scanning.
 - CLI progress indicators, tool status, and response rendering.
@@ -162,7 +162,7 @@ bun run docker:up
 bun run docker:down
 ```
 
-For example, when you ask REXA to clone `https://github.com/example/project`, Git creates the clone under `/workspace`, not in the host project directory. Normal Git commands such as `status` use `/app` by default so REXA can work with the current project.
+For example, when you ask REXA to clone `https://github.com/example/project`, Git creates the clone under `/workspace`, not in the host project directory. Normal Git commands such as `status`, `commit`, and `push` run against the current project on the host after confirmation, so they can use the user's existing Git credentials.
 
 The workspace volume persists across normal `docker compose down` commands. Remove it and its cloned repositories with:
 
@@ -218,7 +218,7 @@ REXA:
 
 ## How coding works
 
-For the current project, file and coding tools operate on the project workspace mounted at `/app`. This lets REXA make real changes to the checked-out project. Commands run inside the sandbox, so builds, scripts, and package-manager operations are isolated from the host.
+For the current project, file and coding tools operate on the project workspace mounted at `/app`. This lets REXA make real changes to the checked-out project. Build, script, and package-manager commands run inside the sandbox; approved current-project Git commands run on the host to use the user's existing Git credentials.
 
 Repositories cloned through `git_command` are placed in `/workspace`, a separate Docker-managed volume. Use sandbox commands with `workdir: "/workspace"` to inspect or build those clones. They are deliberately kept outside the host project directory.
 
@@ -234,7 +234,7 @@ After changes, the coding tool reads the current file content again so the agent
 
 | Tool | Purpose |
 | --- | --- |
-| `git_command` | Run Git inside Docker; current project `/app`, cloned repositories `/workspace` |
+| `git_command` | Run approved Git operations; host for current project, Docker for clones in `/workspace` |
 | `execute_command` | Run approved executables inside Docker with a timeout |
 | `coding_context_tool` | Gather relevant coding context |
 | `code_tool` | Perform coding operations |
@@ -263,7 +263,8 @@ After changes, the coding tool reads the current file content again so the agent
 ## Security model
 
 - API keys are stored through the platform credential store when configured through the CLI.
-- Commands execute in Docker as a non-root user with resource limits and an execution timeout.
+- Build, script, and package-manager commands execute in Docker as a non-root user with resource limits and an execution timeout.
+- Every Git command requires explicit approval. Current-project Git runs on the host to use the user's configured credentials; clone-volume Git runs inside Docker.
 - Git clones go to the private `/workspace` Docker volume.
 - Shell built-ins and several destructive commands are blocked by the command policy.
 - Input and output guardrails inspect requests and responses for unsafe content and secrets.
@@ -271,7 +272,7 @@ After changes, the coding tool reads the current file content again so the agent
 
 ### Permission model
 
-All executable commands are launched through the Docker sandbox. Read-only work such as inspecting files, checking status, viewing diffs, and running ordinary verification commands can proceed automatically. REXA asks for confirmation before state-changing operations, including:
+Build, script, and package-manager commands are launched through the Docker sandbox. Every Git command requires explicit approval and clearly states whether it will run on the host or in the clone sandbox. Other read-only work can proceed automatically. REXA asks for confirmation before state-changing operations, including:
 
 - Git clone, add, commit, push, pull, merge, rebase, reset, clean, branch, tag, checkout, and switch operations.
 - Package-manager mutations such as install, add, remove, update, upgrade, and CI installation commands.

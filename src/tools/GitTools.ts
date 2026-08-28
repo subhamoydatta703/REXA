@@ -2,7 +2,7 @@ import { z } from "zod";
 import { type Tool } from "./ToolRegistry";
 import { sandboxManager } from "./ExecutionManager";
 import { confirm } from "@inquirer/prompts";
-import { getGitOperation, gitRequiresConfirmation } from "./CommandPolicy";
+import { getGitOperation, validateSandboxedGitClone } from "./CommandPolicy";
 import { pauseActiveSpinner, resumeActiveSpinner } from "../cli/TerminalState";
 
 const gitCommandSchema = z.object({
@@ -13,38 +13,39 @@ const gitCommandSchema = z.object({
     workdir: z
         .enum(["/app", "/workspace"])
         .default("/app")
-        .describe("Sandbox working directory. Use /app for the current project or /workspace for a previously cloned repository."),
+        .describe("Git target: /app uses the current project and host Git credentials; /workspace uses a cloned repository inside Docker."),
 });
 
 export const gitCommand: Tool = {
     name: "git_command",
-    description: "Execute Git commands inside the Docker sandbox. The current project is available at /app. Clones always go to the private /workspace volume. Use workdir /workspace for Git commands against a cloned repository.",
+    description: "Execute Git commands after explicit user confirmation. Git for the current project runs on the host so it can use the user's configured credentials for push. Clones and Git commands with workdir /workspace run in Docker's private sandbox volume.",
     parameters: gitCommandSchema,
     execute: async (args: z.infer<typeof gitCommandSchema>) => {
         const parsed = gitCommandSchema.parse(args);
         try {
             const operation = getGitOperation(parsed.args);
             const workdir = operation === "clone" ? "/workspace" : parsed.workdir;
-            if (gitRequiresConfirmation(parsed.args)) {
-                const spinnerWasActive = pauseActiveSpinner();
-                let approved = false;
-                try {
-                    approved = await confirm({
-                        message: `Allow sandbox Git operation: git ${parsed.args.join(" ")}?`,
-                        default: false,
-                    });
-                } finally {
-                    resumeActiveSpinner(spinnerWasActive);
-                }
-                if (!approved) {
-                    return { success: false, status: "rejected", command: "git", args: parsed.args, workdir, message: "Git operation rejected by the user." };
-                }
+            const cloneValidation = operation === "clone" ? validateSandboxedGitClone(parsed.args) : undefined;
+            if (cloneValidation) {
+                return { success: false, status: "rejected", command: "git", args: parsed.args, workdir, message: cloneValidation };
             }
-            const result = await sandboxManager.execute({
-                command: "git",
-                args: parsed.args,
-                workdir,
-            });
+            const spinnerWasActive = pauseActiveSpinner();
+            let approved = false;
+            try {
+                approved = await confirm({
+                    message: `Allow ${workdir === "/workspace" ? "sandbox" : "host"} Git operation: git ${parsed.args.join(" ")}?`,
+                    default: false,
+                });
+            } finally {
+                resumeActiveSpinner(spinnerWasActive);
+            }
+            if (!approved) {
+                return { success: false, status: "rejected", command: "git", args: parsed.args, workdir, message: "Git operation rejected by the user." };
+            }
+
+            const result = workdir === "/workspace"
+                ? await sandboxManager.execute({ command: "git", args: parsed.args, workdir })
+                : await executeHostGit(parsed.args);
 
             if (!result.success) {
                 return { ...result, status: "error", message: result.stderr || result.stdout };
@@ -58,3 +59,28 @@ export const gitCommand: Tool = {
 };
 
 export const gitStatus = gitCommand;
+
+async function executeHostGit(args: string[]) {
+    const targetWorkspace = process.cwd();
+    const gitProcess = Bun.spawn(["git", ...args], {
+        cwd: targetWorkspace,
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(gitProcess.stdout).text(),
+        new Response(gitProcess.stderr).text(),
+        gitProcess.exited,
+    ]);
+
+    return {
+        success: exitCode === 0,
+        status: exitCode === 0 ? "executed" : "failed",
+        command: "git",
+        args,
+        exitCode,
+        stdout,
+        stderr,
+        workdir: "/app" as const,
+    };
+}
