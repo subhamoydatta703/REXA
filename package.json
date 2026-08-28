@@ -6,8 +6,13 @@
   "scripts": {
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "docker:build": "docker compose build"
+    "docker:build": "docker compose build",
+    "rexa": "bun run src/index.ts"
   },
+  "bin": {
+  "rexa": "./src/index.ts"
+},
+
   "devDependencies": {
     "@types/bun": "latest"
   },
