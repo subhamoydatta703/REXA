@@ -1,6 +1,6 @@
 {
   "name": "rexa-agent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "REXA — a general-purpose, single-agent development harness that understands tasks, gathers context, plans solutions, writes code, runs checks, and reports results through one continuous conversation.",
   "module": "index.ts",
   "type": "module",
@@ -8,11 +8,11 @@
   "author": "Subhamoy Datta",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/subhamoydatta703/Agent-ADK.git"
+    "url": "git+https://github.com/subhamoydatta703/REXA.git"
   },
-  "homepage": "https://github.com/subhamoydatta703/Agent-ADK#readme",
+  "homepage": "https://github.com/subhamoydatta703/REXA#readme",
   "bugs": {
-    "url": "https://github.com/subhamoydatta703/Agent-ADK/issues"
+    "url": "https://github.com/subhamoydatta703/REXA/issues"
   },
   "keywords": [
     "ai-agent",
