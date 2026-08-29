@@ -6,6 +6,8 @@ import ora, { type Ora } from "ora";
 import os from "node:os";
 import path from "node:path";
 import { setActiveSpinner } from "./TerminalState";
+import { marked } from "marked";
+import { markedTerminal } from "marked-terminal";
 
 export class AgentUI {
     
@@ -55,7 +57,7 @@ export class AgentUI {
         const home = path.resolve(os.homedir());
         const isBroadWorkspace = resolved === home || resolved === path.parse(resolved).root;
 
-        console.log(chalk.gray("  Workspace mounted read/write in sandbox: ") + chalk.white(resolved));
+        // console.log(chalk.gray("  Workspace mounted read/write in sandbox: ") + chalk.white(resolved));
         if (isBroadWorkspace) {
             console.log(chalk.yellow("  Warning: start REXA inside a project folder, not your home or drive root."));
         }
@@ -89,22 +91,54 @@ export class AgentUI {
     //   Renders the agent's response 
     
     static renderResponse(text: string): void {
-        // Preserve Markdown markers so lists, headings and code remain structured.
         const cleaned = text?.trim();
-
         if (!cleaned) return;
 
+        // Set up marked to render markdown for the terminal (marked-terminal v7+ API)
+        marked.use(markedTerminal());
+
+        // Reserve space for the gutter prefix "  ▎ " (4 visible chars + 2 spaces = 6)
+        const gutterWidth = 6;
+        const termWidth = (process.stdout.columns || 100) - gutterWidth;
+
+        // Word-wrap a plain string to termWidth
+        const wrapLine = (str: string): string[] => {
+            const words = str.split(" ");
+            const wrapped: string[] = [];
+            let current = "";
+            for (const word of words) {
+                if ((current + (current ? " " : "") + word).length > termWidth) {
+                    if (current) wrapped.push(current);
+                    current = word;
+                } else {
+                    current = current ? `${current} ${word}` : word;
+                }
+            }
+            if (current) wrapped.push(current);
+            return wrapped.length ? wrapped : [""];
+        };
+
         console.log("");
-        
+
         const now = new Date();
         const time = chalk.gray(`${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`);
         console.log("  " + this.accentTheme("rexa") + chalk.gray(" · ") + time);
         console.log("");
 
-        
-        const lines = cleaned.split("\n");
+        // Render markdown first, then wrap each output line
+        const rendered = (marked(cleaned) as string).trimEnd();
+        const lines = rendered.split("\n");
         for (const line of lines) {
-            console.log(chalk.hex("#3B3B4F")("  ▎ ") + chalk.white(line));
+            // Strip ANSI for length measurement, then wrap on visible length
+            const visibleLine = line.replace(/\x1b\[[0-9;]*m/g, "");
+            if (visibleLine.length <= termWidth) {
+                console.log(chalk.hex("#3B3B4F")("  ▎ ") + line);
+            } else {
+                const chunks = wrapLine(visibleLine);
+                for (const chunk of chunks) {
+                    console.log(chalk.hex("#3B3B4F")("  ▎ ") + chunk);
+                }
+            }
         }
 
         console.log("");
