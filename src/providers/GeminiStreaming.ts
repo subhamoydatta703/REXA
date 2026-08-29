@@ -5,16 +5,6 @@ import { type Tool } from "../tools/ToolRegistry";
 
 dotenv.config();
 
-const apiKey = process.env.GEMINI_STREAMING_API_KEY;
-
-if (!apiKey) {
-    throw new Error("API key for Gemini Streaming is not set");
-}
-
-const ai = new GoogleGenAI({
-    apiKey,
-});
-
 export interface GeminiConfig {
     maxOutputTokens?: number;
     thinkingLevel?: ThinkingLevel;
@@ -28,6 +18,12 @@ export async function* streamGemini(
     let stream;
 
     try {
+        const apiKey = process.env.GEMINI_STREAMING_API_KEY || process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+            throw new Error("API key for Gemini Streaming is not set");
+        }
+        const ai = new GoogleGenAI({ apiKey });
+
         // Convert messages to Gemini format if necessary. 
         // Assuming current simple content passing for now based on previous implementation
         const content = messages.map(m => m.content).join("\n");

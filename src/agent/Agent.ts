@@ -19,14 +19,14 @@ export class Agent {
     private inputGuardrails: InputGuardrails;
     private outputGuardrails: OutputGuardrails;
 
-    constructor(llm: LLMProvider, registry: ToolRegistry, maxSteps: number = 60, name: string = "REXA", sandbox: ExecutionManager = sandboxManager) {
+    constructor(llm: LLMProvider, registry: ToolRegistry, maxSteps: number = 60, name: string = "REXA", sandbox: ExecutionManager = sandboxManager, apiKey?: string) {
         this.llm = llm;
         this.registry = registry;
         this.maxSteps = maxSteps;
         this.name = name;
         this.sandbox = sandbox;
-        this.inputGuardrails = new InputGuardrails();
-        this.outputGuardrails = new OutputGuardrails();
+        this.inputGuardrails = new InputGuardrails(apiKey);
+        this.outputGuardrails = new OutputGuardrails(apiKey);
     }
 
     private getSystemPrompt(): string {

@@ -186,7 +186,7 @@ export class ConfigManager {
     }
 
     /**
-     * Sets Gemini API key (encrypted on disk).
+     * Sets Gemini API key (encrypted on disk and stored in OS vault).
      */
     static async setGeminiApiKey(key: string): Promise<void> {
         const trimmed = key.trim();
@@ -194,17 +194,23 @@ export class ConfigManager {
             console.log(chalk.red("  ✗ Gemini API Key cannot be empty."));
             return;
         }
+        process.env.GEMINI_API_KEY = trimmed;
         try {
             await keytar.setPassword(KEYTAR_SERVICE, GEMINI_ACCOUNT, trimmed);
         } catch (error) {
-            console.error(chalk.red(`  ✗ Failed to store Gemini API key in the OS credential vault: ${error instanceof Error ? error.message : String(error)}`));
-            return;
+            // Ignore keytar failures (e.g. headless environment) and fall back to file storage
         }
+        const currentConfig = await this.getConfig().catch(() => ({}));
+        this.saveConfig({
+            ...currentConfig,
+            geminiApiKey: trimmed,
+            updatedAt: new Date().toISOString(),
+        });
         console.log(chalk.green("  ✓ Gemini API Key securely saved to ") + chalk.gray(CONFIG_FILE));
     }
 
     /**
-     * Sets Tavily API key (encrypted on disk).
+     * Sets Tavily API key (encrypted on disk and stored in OS vault).
      */
     static async setTavilyApiKey(key: string): Promise<void> {
         const trimmed = key.trim();
@@ -212,12 +218,18 @@ export class ConfigManager {
             console.log(chalk.red("  ✗ Tavily API Key cannot be empty."));
             return;
         }
+        process.env.TAVILY_API_KEY = trimmed;
         try {
             await keytar.setPassword(KEYTAR_SERVICE, TAVILY_ACCOUNT, trimmed);
         } catch (error) {
-            console.error(chalk.red(`  ✗ Failed to store Tavily API key in the OS credential vault: ${error instanceof Error ? error.message : String(error)}`));
-            return;
+            // Ignore keytar failures and fall back to file storage
         }
+        const currentConfig = await this.getConfig().catch(() => ({}));
+        this.saveConfig({
+            ...currentConfig,
+            tavilyApiKey: trimmed,
+            updatedAt: new Date().toISOString(),
+        });
         console.log(chalk.green("  ✓ Tavily Search API Key securely saved to ") + chalk.gray(CONFIG_FILE));
     }
 
@@ -226,10 +238,18 @@ export class ConfigManager {
      */
     static async getGeminiApiKey(): Promise<string | undefined> {
         const envKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY;
-        if (envKey && envKey.trim()) return envKey.trim();
+        if (envKey && envKey.trim()) {
+            const trimmed = envKey.trim();
+            process.env.GEMINI_API_KEY = trimmed;
+            return trimmed;
+        }
 
         const config = await this.getConfig();
-        if (config.geminiApiKey && config.geminiApiKey.trim()) return config.geminiApiKey.trim();
+        if (config.geminiApiKey && config.geminiApiKey.trim()) {
+            const trimmed = config.geminiApiKey.trim();
+            process.env.GEMINI_API_KEY = trimmed;
+            return trimmed;
+        }
 
         return undefined;
     }
@@ -258,7 +278,7 @@ export class ConfigManager {
             console.log(chalk.gray("  ─────────────────────────────────────────────────────────"));
             console.log(chalk.white("  You can set your API key anytime using either method:"));
             console.log("");
-            console.log(chalk.cyan("    1. Command:  ") + chalk.bold.white("rexa config set-key <YOUR_GEMINI_API_KEY>"));
+            console.log(chalk.cyan("    1. Command:  ") + chalk.bold.white("rexa config set-key"));
             console.log(chalk.cyan("    2. Env Var:  ") + chalk.bold.white("export GEMINI_API_KEY=\"your_key_here\""));
             console.log(chalk.gray("  ─────────────────────────────────────────────────────────\n"));
 
