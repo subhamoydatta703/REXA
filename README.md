@@ -1,16 +1,25 @@
-﻿# REXA
+# REXA
 
-REXA is a general-purpose, single-agent development harness created by Subhamoy Datta. It understands a task, gathers context, reflects on its own plan, writes or edits code, executes commands, searches the web, investigates failures, and reports the result through one continuous conversation — for up to 60 reasoning steps per task.
+> A general-purpose, single-agent development harness. REXA understands a task, gathers context, reflects on its own plan, writes or edits code, runs commands, searches the web, investigates failures, and reports the result — all through one continuous conversation of up to 60 reasoning steps.
 
-> REXA is an experimental agent harness. Review tool requests and do not run it against sensitive data without understanding the permissions and Docker configuration.
+<br/>
+
+<p align="center">
+  <img src="https://img.shields.io/github/license/subhamoydatta703/REXA" alt="License">
+  <img src="https://img.shields.io/github/stars/subhamoydatta703/REXA?style=social" alt="Stars">
+  <img src="https://img.shields.io/github/actions/workflow/status/subhamoydatta703/REXA/ci.yml?branch=main&label=CI" alt="CI">
+  <img src="https://img.shields.io/npm/v/rexa-agent" alt="npm version">
+  <img src="https://img.shields.io/npm/dt/rexa-agent" alt="npm downloads">
+  <img src="https://img.shields.io/badge/runtime-Bun-f9f1dc" alt="Runtime: Bun">
+</p>
+
+> **Warning:** Experimental agent harness. Review tool requests carefully and do not run REXA against sensitive data without understanding its permissions and Docker configuration.
 
 ## Why REXA is more than a tool runner
 
 REXA is an agent, not a collection of disconnected commands. The model decides which capabilities are needed, calls them in sequence, observes their results, and continues until it can answer or complete the task. Before executing any tool call, REXA reflects on its own proposed plan — if the plan is flawed, redundant, or hallucinated, it scraps it and re-generates before touching anything.
 
-A single request can combine repository inspection, code changes, Git operations, command execution, web research, and verification.
-
-For example, a request to fix a bug causes REXA to:
+A single request can combine repository inspection, code changes, Git operations, command execution, web research, and verification. For example, a request to fix a bug causes REXA to:
 
 1. Map the project and locate relevant files.
 2. Read the implementation and its surrounding context.
@@ -21,11 +30,68 @@ For example, a request to fix a bug causes REXA to:
 7. Inspect failures and iterate.
 8. Explain what changed and what was verified.
 
+## Demo
+
+![REXA demo](docs/demo.gif)
+
+> **Tip:** Want a live demo here? Record a short terminal session (`vhs`, `peek`, or `asciinema`) and save it as `docs/demo.gif`. A moving demo of REXA fixing a failing test is the single biggest star-driver for a dev tool.
+
+```text
+$ bun run rexa
+
+ ____  _______  __    _
+|  _ \| ____| \/ /   / \
+| |_) |  _|  \  /   / _ \
+|  _ <| |___ /  \  / ___ \
+|_| \_\_____/_/\_\/_/   \_\
+
++-----------------------------------------------+
+|  REXA CLI  v1.0.0 |  Autonomous Agent Harness  |
++-----------------------------------------------+
+
+  > Yo, it's me... REXA. What's the plan?
+
+  > Find why the auth test is failing and fix it.
+
+  * get_project_tree    running...
+  + get_project_tree    done (0.3s)
+  * coding_context_tool running...
+  + coding_context_tool done (0.2s)
+  * code_tool          running...
+  + code_tool          done (0.1s)
+  * execute_command    running [bun test]
+  + execute_command    done (3.1s)
+
+  rexa . 20:01
+
+  Found the issue -- missing null check on line 42 of auth.ts.
+  Fixed with a guard clause.  All tests pass.
+```
+
+## Quick start
+
+```bash
+# 1. Install REXA
+npm install -g rexa-agent
+# or from source: git clone https://github.com/subhamoydatta703/REXA.git && cd REXA && bun install
+
+# 2. Set your Gemini API key
+export GEMINI_API_KEY=your-key
+
+# 3. Run it inside any repo you want to work on
+cd path/to/your/repository
+rexa
+```
+
+Type a task (for example `Find why the auth test is failing and fix it.`) and press Enter. Type `exit` or `quit` to leave.
+
+See [Configuration & API keys](#configuration--api-keys) for the secure vault option, and [Docker sandbox](#docker-sandbox) for how commands are isolated.
+
 ## Capabilities
 
 - **Continuous agent loop** — up to 60 steps per task (configurable via `--max-steps`).
 - **Plan reflection** — the agent reflects on its own proposed tool calls before executing; bad or redundant plans are discarded and re-generated.
-- **Autonomous coding workflow** — understand context, create files, apply targeted edits, re-read the file after every change to reason from the actual result.
+- **Autonomous coding workflow** — understand context, create files, apply targeted edits, and re-read the file after every change to reason from the actual result.
 - **File tools** — find, read (single and batch), create, edit (before/after/replace/delete), append, count, list, and delete files, scoped to the active project.
 - **Project tree inspection** — inspect the full directory tree for deep structural context.
 - **Sandboxed command execution** — commands run inside Docker with a 60-second default timeout (configurable up to 5 minutes); the process is hard-killed on timeout.
@@ -44,18 +110,11 @@ REXA can help with tasks such as:
 - "Add input validation to the user registration flow, then run the type checker."
 - "Find why this test is failing, fix the smallest correct cause, and verify it."
 - "Review this repository for exposed secrets and unsafe file operations."
-- "Clone this repository in the sandbox, inspect its dependencies, and summarize risks."
-- "Create a plan for migrating this module, then implement the first step."
-- "Search for the current API documentation and compare it with this code."
+- "Clone https://github.com/example/repo in the sandbox, inspect its dependencies, and summarize its security posture."
 
-## Requirements
+## Configuration & API keys
 
-- [Bun](https://bun.sh/) 1.3 or newer
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) with Compose
-- A Gemini API key (main agent model)
-- Optional: a second Gemini API key for the guardrail model, a Tavily key for premium search
-
-The current provider adapter expects these environment variables:
+### Environment variables
 
 | Variable | Purpose |
 | --- | --- |
@@ -66,7 +125,7 @@ The current provider adapter expects these environment variables:
 
 The main model key can also be entered interactively on first launch and is stored in the OS credential manager. On Windows it is stored in Windows Credential Manager; on macOS and Linux, `keytar` uses the platform credential service.
 
-## Installation
+### Install from source
 
 ```bash
 git clone https://github.com/subhamoydatta703/REXA.git
@@ -74,16 +133,10 @@ cd REXA
 bun install
 ```
 
-Or install directly from npm:
-
-```bash
-npm install -g rexa-agent
-```
-
 Create a `.env` file if you are using environment variables:
 
 ```dotenv
-GEMINI_API_KEY=your-gemini-key
+GEMINI_API_KEY=your-key
 GEMINI_GUARD_API_KEY=your-guardrail-key
 GEMINI_STREAMING_API_KEY=your-streaming-key
 TVLY_API_KEY=your-optional-tavily-key
@@ -91,36 +144,19 @@ TVLY_API_KEY=your-optional-tavily-key
 
 Never commit `.env` or API keys to Git.
 
-## Start the CLI agent
+### Run the CLI agent
 
 ```bash
 bun run rexa
 ```
 
-REXA opens an interactive prompt; type a task and press Enter. Type `exit` or `quit` to leave.
-
-### Run with `rexa`
-
-To make the CLI available as a standalone terminal command, create a global Bun link once from the repository directory:
+Or link it so `rexa` works from any directory:
 
 ```bash
 bun link
 ```
 
-After linking, start the agent from any directory with:
-
-```bash
-rexa
-```
-
-REXA treats the directory where you run this command as the active project. For example:
-
-```bash
-cd path/to/your/repository
-rexa
-```
-
-File tools and normal Git operations work on that repository. The Docker sandbox mounts it at `/app`; REXA itself does not need to be copied into every project.
+After linking, start the agent from any repository with `rexa`. REXA treats the directory where you run it as the active project; the Docker sandbox mounts it at `/app`, and REXA itself does not need to be copied into every project.
 
 Useful options:
 
@@ -130,9 +166,7 @@ rexa --max-steps 30
 rexa --name Nova
 ```
 
-## Configure API keys
-
-The safest CLI setup is:
+### Configure API keys securely
 
 ```bash
 bun run src/index.ts config set-key YOUR_GEMINI_API_KEY
@@ -141,7 +175,7 @@ bun run src/index.ts config set-tavily-key YOUR_TAVILY_API_KEY
 
 These commands store keys in the operating system credential vault via `keytar`. Environment variables take priority over stored credentials.
 
-For CI or temporary sessions, use environment variables instead:
+For CI or temporary sessions:
 
 ```bash
 GEMINI_API_KEY=your-key bun run rexa
@@ -154,9 +188,9 @@ $env:GEMINI_API_KEY = "your-key"
 bun run rexa
 ```
 
-Avoid passing secrets as command-line arguments when possible because shell history and process inspection may expose them.
+Avoid passing secrets as command-line arguments when possible, because shell history and process inspection may expose them.
 
-## Docker sandbox
+### Docker sandbox
 
 Commands run in the `sandbox` service as a non-root user. The directory where the user starts `rexa` is mounted at `/app`, while cloned repositories are stored in a separate Docker-managed volume at `/workspace`.
 
@@ -176,88 +210,31 @@ docker compose down -v
 
 This does not delete files from the host project directory.
 
-## Demo
-
-```text
-$ bun run rexa
-
- ____  _______  __    _
-|  _ \| ____\ \/ /   / \
-| |_) |  _|  \  /   / _ \
-|  _ <| |___ /  \  / ___ \
-|_| \_\_____/_/\_\/_/   \_\
-
-+-----------------------------------------------+
-|  REXA CLI  v1.0.0 |  Autonomous Agent Harness  |
-+-----------------------------------------------+
-
-  > Yo, it's me... REXA. What's the plan?
-
-  > Find why the auth test is failing and fix it.
-
-  * get_project_tree  running...
-  + get_project_tree  done (0.3s)
-  * coding_context_tool  running...
-  + coding_context_tool  done (0.2s)
-  * code_tool  running...
-  + code_tool  done (0.1s)
-  * execute_command  running [bun test]
-  + execute_command  done (3.1s)
-
-  rexa . 20:01
-
-  Found the issue -- missing null check on line 42 of auth.ts.
-  Fixed with a guard clause. All tests pass.
-```
-
-Other useful prompts:
-
-```text
-Explain the structure of this project.
-Find the authentication code and explain the security risks.
-Run the tests and summarize any failures.
-Search for the latest Bun documentation and compare it with this project.
-Clone https://github.com/example/repo in the sandbox and summarize its architecture.
-```
-
-## How coding works
-
-For the current project, file and coding tools operate on the project workspace mounted at `/app`. This lets REXA make real changes to the checked-out project. Build, script, and package-manager commands run inside the sandbox; approved current-project Git commands run on the host to use the user's existing Git credentials.
-
-Repositories cloned through `git_command` are placed in `/workspace`, a separate Docker-managed volume. Use sandbox commands with `workdir: "/workspace"` to inspect or build those clones. They are deliberately kept outside the host project directory.
-
-REXA's coding tools support three edit modes:
-
-- `create`: create a new file with complete content.
-- `write`: replace an entire file intentionally.
-- `edit`: apply targeted `before`, `after`, `replace`, or `delete` changes.
-
-After every change, the coding tool re-reads the current file content so the agent reasons from the actual result, not an assumption.
-
 ## Available tools
 
 | Tool | Purpose |
 | --- | --- |
-| `git_command` | Run approved Git operations; host for current project, Docker for clones in `/workspace` |
-| `execute_command` | Run approved executables inside Docker with a configurable timeout |
-| `coding_context_tool` | Gather relevant file content as coding context |
-| `code_tool` | Perform `create`, `write`, or `edit` coding operations with post-change verification |
-| `get_project_tree` | Inspect the full project directory tree |
-| File tools | Find, read (single/batch), create, edit, append, count, list, and delete files |
-| `search` | Tavily > GitHub API > DuckDuckGo > direct fetch, in priority order |
+| `git_command` | Approved Git operations: host for the current project, Docker for clones in `/workspace` |
+| `execute_command` | Run approved executables in the Docker sandbox |
+| `coding_context_tool` | Gather file content as coding context |
+| `code_tool` | Create, write, or edit files with verification |
+| `get_project_tree` | Inspect the project directory tree |
+| File tools | Find, read, create, edit, append, list, delete |
+| `search` | Tavily > GitHub API > DuckDuckGo > direct fetch |
 
 ## Project layout
 
 ```text
 .
 +-- src/
-|   +-- agent/          # Agent loop, plan reflection, and message handling
-|   +-- cli/            # Interactive terminal UI (Commander, Ink, Chalk, Ora)
-|   +-- config/         # Credential and configuration management (keytar)
-|   +-- guardrails/     # Input/output safety checks and secret scanning
-|   +-- logger/         # Structured CLI logging with tool status and timing
-|   +-- providers/      # Gemini LLM provider with streaming support
+|   +-- agent/          # Agent loop, plan reflection, messages
+|   +-- cli/            # Interactive terminal UI
+|   +-- config/         # Credentials and configuration (keytar)
+|   +-- guardrails/     # Input/output safety, secret scanning
+|   +-- logger/         # Structured CLI logging
+|   +-- providers/      # Gemini LLM provider with streaming
 |   +-- tools/          # Tool implementations and registry
++-- .github/            # CI workflow, issue and PR templates
 +-- docker-compose.yaml # Docker sandbox and workspace volume
 +-- sandbox.Dockerfile  # Non-root sandbox image
 +-- package.json
@@ -266,43 +243,49 @@ After every change, the coding tool re-reads the current file content so the age
 
 ## Security model
 
-- **API keys** are stored via `keytar` in the OS credential vault — Windows Credential Manager, macOS Keychain, or libsecret. Keys are never written to disk in plaintext.
-- **Dual guardrail system** — a dedicated Gemini Flash Lite model instance runs independently from the main agent, inspecting every user input before it reaches the agent and every agent response before it reaches the terminal.
-- **Secret scanning** — every input and output is scanned using regex patterns for common credential formats and Shannon entropy analysis to catch high-entropy strings that pattern matching might miss.
-- **Docker sandbox** — commands execute inside Docker as a non-root user. Commands have a 60-second default timeout (configurable up to 5 minutes); the process is hard-killed on breach.
-- **Volume isolation** — the host project is mounted at `/app`; cloned repositories go to `/workspace`, a separate Docker volume that never touches the host filesystem.
-- **Git approval** — every mutating Git operation requires explicit user confirmation before running. The prompt states clearly whether the command runs on the host or in the sandbox.
-- **Command policy** — 18 shell built-ins and destructive aliases are permanently blocked: `ls`, `cat`, `dir`, `cd`, `echo`, `mkdir`, `rmdir`, `find`, `cmd`, `grep`, `pwd`, `rm`, `cp`, `mv`, `touch`, `which`, `where`, `type`. Package-manager mutations and script runners require confirmation. Evaluated code flags (`-e`, `-c`, `--eval`, `--print`) require confirmation.
-- **SSRF protection** — the search tool blocks requests to localhost, loopback (`127.x.x.x`), private network ranges (`10.x`, `172.16-31.x`, `192.168.x`), and link-local addresses (`169.254.x`). Redirects are not followed.
+- Keys are stored in the OS credential vault via `keytar` — never written to disk in plaintext.
+- **Dual guardrail system** — a Gemini Flash Lite model inspects every input and output independently from the main agent.
+- **Secret scanning** — every pass scans for credential patterns (regex) plus Shannon entropy analysis.
+- **Docker sandbox** — commands run inside Docker as a non-root user; 60-second default timeout, hard-killed on breach.
+- **Volume isolation** — the host project mounts at `/app`; clones go to `/workspace`, separate from the host filesystem.
+- **Git approval** — mutating Git operations require explicit confirmation before running.
+- **Command policy** — destructive shell commands are blocked; package-manager mutations need confirmation.
+- **SSRF protection** — the search tool blocks localhost, private, and link-local addresses; redirects are not followed.
 
-### Permission model
+## Permission model
 
-REXA asks for confirmation before any state-changing operation. Read-only operations proceed automatically. A confirmation prompt is an authorization boundary — review the full command and its arguments, not just the executable name.
+REXA confirms every state-changing operation; read-only operations run automatically. No sandbox replaces review and least-privilege practices.
 
-No sandbox replaces review and least-privilege practices. Do not provide production credentials, mount sensitive directories, or disable Docker isolation unless you understand the consequences.
+## REXA versus other agent CLIs
+
+| | REXA | Claude Code | OpenHands |
+| --- | --- | --- | --- |
+| Plan reflection before tool calls | Yes | Partial | Partial |
+| Docker sandboxed execution | Yes | No | Yes |
+| Dual guardrail system | Yes | No | No |
+| Entropy-based secret scanning | Yes | No | Partial |
+| Open source | MIT | No | MIT |
+| Install | `npm i -g rexa-agent` | `npm i -g` | pip / Docker |
+
+An honest note: REXA is a young, single-developer project while Claude Code and OpenHands are mature products. REXA's differentiators are the guardrails and secret-scanning layer built into the agent loop itself.
 
 ## Troubleshooting
 
-### Docker is unavailable
+### Docker unavailable
 
-```bash
-docker version
-docker compose version
-```
-
-Start Docker Desktop and retry.
+Start Docker Desktop and retry, or verify with `docker version`.
 
 ### Guardrail errors
 
-Set `GEMINI_GUARD_API_KEY` to a valid Gemini API key. The guardrail model (`gemini-3.1-flash-lite`) is initialized separately from the main agent model.
+Set `GEMINI_GUARD_API_KEY` to a valid Gemini API key.
 
-### Search is unavailable
+### Search unavailable
 
-Tavily is optional. Without a valid Tavily key, REXA falls back automatically to GitHub API, DuckDuckGo, and direct webpage fetch. Check network access and confirm the query is not empty.
+Tavily is optional; without a key REXA falls back to GitHub API, DuckDuckGo, and direct webpage fetch.
 
-### Reset stored credentials
+### Reset credentials
 
-Remove the `rexa` service credentials from your operating system credential manager (Windows Credential Manager / macOS Keychain / libsecret), then run REXA again and enter fresh keys.
+Remove the `rexa` credentials from your OS credential manager, then run REXA again and enter fresh keys.
 
 ## Development
 
@@ -310,11 +293,11 @@ Remove the `rexa` service credentials from your operating system credential mana
 bun x tsc --noEmit -p tsconfig.json
 ```
 
-The project uses strict TypeScript settings and Bun's module and runtime conventions.
+The project uses strict TypeScript settings and Bun's module and runtime conventions. A CI workflow runs this check on every push and pull request.
 
-## About the creator
+## Contributing
 
-REXA was created by **Subhamoy Datta** as a complete agent harness for practical software-development work. The architecture, agent loop, plan reflection system, tool orchestration, coding workflow, sandbox integration, guardrail pipeline, CLI experience, and security model are Subhamoy's implementation. The Gemini model API is one replaceable component used by the harness to provide language intelligence; REXA's value is in the orchestration and development system built around it.
+Contributions are welcome! See [CONTRIBUTING.md](./CONTRIBUTING.md) and the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ## License
 
