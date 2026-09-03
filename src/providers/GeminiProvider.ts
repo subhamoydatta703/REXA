@@ -45,7 +45,7 @@ export class GeminiProvider implements LLMProvider {
             });
 
             const response = await this.client.models.generateContent({
-                model: "gemini-3.1-flash-lite",
+                model: "gemini-3.5-flash-lite",
                 contents,
                 config: {
                     systemInstruction: systemInstruction,

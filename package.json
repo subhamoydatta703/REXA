@@ -1,6 +1,6 @@
 {
   "name": "rexa-agent",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "REXA — a general-purpose, single-agent development harness that understands tasks, gathers context, plans solutions, writes code, runs checks, and reports results through one continuous conversation.",
   "main": "src/index.ts",
   "module": "src/index.ts",
