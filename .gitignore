@@ -1,19 +1,20 @@
 # dependencies (bun install)
-node_modules
+node_modules/
+.bun/
 
 # output
-out
-dist
+out/
+dist/
 *.tgz
 
 # code coverage
-coverage
+coverage/
 *.lcov
 
 # logs
-logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+logs/
+*.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # dotenv environment variable files
 .env
@@ -24,14 +25,30 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # caches
 .eslintcache
-.cache
+.cache/
 *.tsbuildinfo
 
-# IntelliJ based IDEs
-.idea
+# AI agent skills (synced by `prisma skills sync` on postinstall)
+.agents/
+.claude/
+.devin/
+.cursor/skills/
 
-# Finder (MacOS) folder config
-.DS_Store
-
-docs/gemini_streaming_fix_plan.md
+# local planning / scratch docs
 docs/
+
+# IntelliJ based IDEs
+.idea/
+
+# VS Code (local workspace state only; keep shared settings if added)
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
