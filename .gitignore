@@ -52,3 +52,7 @@ Desktop.ini
 
 # macOS
 .DS_Store
+
+/generated/prisma
+
+.windsurf/
