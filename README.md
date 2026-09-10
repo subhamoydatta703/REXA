@@ -75,17 +75,16 @@ $ bun run rexa
 npm install -g rexa-agent
 # or from source: git clone https://github.com/subhamoydatta703/REXA.git && cd REXA && bun install
 
-# 2. Set your Gemini API key
-export GEMINI_API_KEY=your-key
-
-# 3. Run it inside any repo you want to work on
+# 2. Run it inside any repo you want to work on
 cd path/to/your/repository
 rexa
 ```
 
+On first launch REXA opens [the REXA website](https://rexa-agent-web.vercel.app/) so you can sign in and generate a CLI token. Paste that token in the terminal (masked input). After the server accepts it, REXA asks for your Gemini API key if one is not already stored.
+
 Type a task (for example `Find why the auth test is failing and fix it.`) and press Enter. Type `exit` or `quit` to leave.
 
-See [Configuration & API keys](#configuration--api-keys) for the secure vault option, and [Docker sandbox](#docker-sandbox) for how commands are isolated.
+See [Account login](#account-login) and [Configuration & API keys](#configuration--api-keys) for the credential vault, and [Docker sandbox](#docker-sandbox) for how commands are isolated.
 
 ## Capabilities
 
@@ -99,7 +98,8 @@ See [Configuration & API keys](#configuration--api-keys) for the secure vault op
 - **4-tier web search** — Tavily (if configured) → GitHub API (for `github.com` URLs) → DuckDuckGo → direct webpage fetch.
 - **Dual guardrail system** — a separate Gemini Flash Lite model inspects every user input and every agent output independently.
 - **Secret scanning on every pass** — regex pattern matching plus Shannon entropy analysis to catch high-entropy credential strings.
-- **Secure API key storage** — credentials are stored via `keytar` in the OS vault: Windows Credential Manager, macOS Keychain, or libsecret on Linux.
+- **Website account login** — first run opens the REXA site; a CLI token is verified with the backend, then stored like other credentials.
+- **Secure credential storage** — API keys and the CLI auth token are stored via `keytar` in the OS vault: Windows Credential Manager, macOS Keychain, or libsecret on Linux.
 - **Rich CLI** — progress spinners, tool status lines with timing, and markdown-rendered responses in the terminal.
 
 ## Example tasks
@@ -112,6 +112,24 @@ REXA can help with tasks such as:
 - "Review this repository for exposed secrets and unsafe file operations."
 - "Clone https://github.com/example/repo in the sandbox, inspect its dependencies, and summarize its security posture."
 
+## Account login
+
+REXA requires a website account before the agent starts.
+
+1. Sign in at [https://rexa-agent-web.vercel.app/](https://rexa-agent-web.vercel.app/) and generate a CLI token (tokens are short-lived; generate a new one if it expires).
+2. Paste the token in the CLI when prompted. Do not paste it as a chat message — use the login prompt, `rexa login`, or the vault.
+3. REXA sends the token to the backend (`POST https://rexa-server.onrender.com/api/cli/verify` with `Authorization: Bearer …`). The token is never written to git and is not logged.
+4. After a successful verify, REXA continues to Gemini API key setup, then the agent.
+
+```bash
+rexa login    # paste a new token and verify
+rexa logout   # remove the saved token
+```
+
+Saved tokens are stored the same way as Gemini keys (`keytar`, with encrypted fallback in `~/.rexa/config.json`). Each start re-checks the token with the server. If it is expired, revoked, or you generated a new one on the site, REXA asks you to paste again.
+
+Paste the token only at the login prompt. Input guardrails will reject a token pasted into the agent chat.
+
 ## Configuration & API keys
 
 ### Environment variables
@@ -122,8 +140,11 @@ REXA can help with tasks such as:
 | `GEMINI_GUARD_API_KEY` | Input/output guardrail model (Gemini Flash Lite) |
 | `GEMINI_STREAMING_API_KEY` | Streaming provider initialization |
 | `TVLY_API_KEY` or `TAVILY_API_KEY` | Optional Tavily search |
+| `REXA_CLI_TOKEN` | Optional CLI auth token (otherwise stored in the vault) |
+| `REXA_WEB_URL` | Override the site opened for login (default: the REXA website) |
+| `REXA_VERIFY_URL` | Override the token verify endpoint (default: Render API) |
 
-The main model key can also be entered interactively on first launch and is stored in the OS credential manager. On Windows it is stored in Windows Credential Manager; on macOS and Linux, `keytar` uses the platform credential service.
+The website token and the Gemini key can also be entered interactively and are stored in the OS credential manager. On Windows it is stored in Windows Credential Manager; on macOS and Linux, `keytar` uses the platform credential service.
 
 ### Install from source
 
@@ -142,7 +163,7 @@ GEMINI_STREAMING_API_KEY=your-streaming-key
 TVLY_API_KEY=your-optional-tavily-key
 ```
 
-Never commit `.env` or API keys to Git.
+Never commit `.env`, API keys, or CLI tokens to Git.
 
 ### Run the CLI agent
 
@@ -162,6 +183,8 @@ Useful options:
 
 ```bash
 rexa --help
+rexa login
+rexa logout
 rexa --max-steps 30
 rexa --name Nova
 ```
@@ -243,7 +266,8 @@ This does not delete files from the host project directory.
 
 ## Security model
 
-- Keys are stored in the OS credential vault via `keytar` — never written to disk in plaintext.
+- Keys and the CLI auth token are stored in the OS credential vault via `keytar` — never written to disk in plaintext.
+- Website login is verified by the REXA backend; the CLI does not embed Clerk or database credentials.
 - **Dual guardrail system** — a Gemini Flash Lite model inspects every input and output independently from the main agent.
 - **Secret scanning** — every pass scans for credential patterns (regex) plus Shannon entropy analysis.
 - **Docker sandbox** — commands run inside Docker as a non-root user; 60-second default timeout, hard-killed on breach.
@@ -283,9 +307,13 @@ Set `GEMINI_GUARD_API_KEY` to a valid Gemini API key.
 
 Tavily is optional; without a key REXA falls back to GitHub API, DuckDuckGo, and direct webpage fetch.
 
+### Login or token verify failed
+
+Generate a new CLI token on the [REXA website](https://rexa-agent-web.vercel.app/) and run `rexa login`. The free Render API may take up to about a minute to wake; wait and retry if the CLI cannot reach the verify URL.
+
 ### Reset credentials
 
-Remove the `rexa` credentials from your OS credential manager, then run REXA again and enter fresh keys.
+Run `rexa logout`, or remove the `rexa` credentials from your OS credential manager, then run REXA again and enter a fresh token and keys.
 
 ## Development
 

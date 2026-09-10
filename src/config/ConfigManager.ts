@@ -392,7 +392,10 @@ export class ConfigManager {
 
             const contentType = response.headers.get("content-type") || "";
             if (contentType.includes("application/json")) {
-                const body = (await response.json()) as { ok?: boolean };
+                const body = (await response.json()) as { ok?: boolean; success?: boolean };
+                if (typeof body.success === "boolean") {
+                    return { ok: body.success };
+                }
                 if (typeof body.ok === "boolean") {
                     return { ok: body.ok };
                 }
