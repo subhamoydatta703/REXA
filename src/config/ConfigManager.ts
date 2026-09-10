@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import chalk from "chalk";
 import { password } from "@inquirer/prompts";
 import keytar from "keytar";
@@ -12,6 +13,11 @@ const CONFIG_KEY_FILE = path.join(CONFIG_DIR, "config.key");
 const KEYTAR_SERVICE = "rexa";
 const GEMINI_ACCOUNT = "gemini-api-key";
 const TAVILY_ACCOUNT = "tavily-api-key";
+const CLI_AUTH_ACCOUNT = "cli-auth-token";
+
+export const REXA_WEB_URL = process.env.REXA_WEB_URL?.trim() || "https://rexa-agent-web.vercel.app/";
+export const REXA_VERIFY_URL =
+    process.env.REXA_VERIFY_URL?.trim() || "https://rexa-server.onrender.com/api/cli/verify";
 
 // Kept only to read configurations written by the old implementation.
 const LEGACY_MACHINE_KEY = crypto
@@ -52,6 +58,7 @@ const AUTH_TAG_LENGTH = 16;
 export interface RexaConfig {
     geminiApiKey?: string;
     tavilyApiKey?: string;
+    cliAuthToken?: string;
     updatedAt?: string;
 }
 
@@ -122,14 +129,16 @@ export class ConfigManager {
      * Reads and decrypts config from ~/.rexa/config.json
      */
     static async getConfig(): Promise<RexaConfig> {
+        const fromVault: RexaConfig = {};
         try {
-            const [geminiApiKey, tavilyApiKey] = await Promise.all([
+            const [geminiApiKey, tavilyApiKey, cliAuthToken] = await Promise.all([
                 keytar.getPassword(KEYTAR_SERVICE, GEMINI_ACCOUNT),
                 keytar.getPassword(KEYTAR_SERVICE, TAVILY_ACCOUNT),
+                keytar.getPassword(KEYTAR_SERVICE, CLI_AUTH_ACCOUNT),
             ]);
-            if (geminiApiKey || tavilyApiKey) {
-                return { geminiApiKey: geminiApiKey || undefined, tavilyApiKey: tavilyApiKey || undefined };
-            }
+            if (geminiApiKey) fromVault.geminiApiKey = geminiApiKey;
+            if (tavilyApiKey) fromVault.tavilyApiKey = tavilyApiKey;
+            if (cliAuthToken) fromVault.cliAuthToken = cliAuthToken;
         } catch {
             // Fall back to the encrypted legacy file if the OS vault is unavailable.
         }
@@ -144,12 +153,20 @@ export class ConfigManager {
                 if (parsed.tavilyApiKey) {
                     parsed.tavilyApiKey = decrypt(parsed.tavilyApiKey);
                 }
-                return parsed;
+                if (parsed.cliAuthToken) {
+                    parsed.cliAuthToken = decrypt(parsed.cliAuthToken);
+                }
+                return {
+                    geminiApiKey: fromVault.geminiApiKey || parsed.geminiApiKey,
+                    tavilyApiKey: fromVault.tavilyApiKey || parsed.tavilyApiKey,
+                    cliAuthToken: fromVault.cliAuthToken || parsed.cliAuthToken,
+                    updatedAt: parsed.updatedAt,
+                };
             }
         } catch {
-            // Config corrupted or key mismatch — return empty
+            // Config corrupted or key mismatch — return vault-only
         }
-        return {};
+        return fromVault;
     }
 
     /**
@@ -166,6 +183,7 @@ export class ConfigManager {
             const dataToSave = {
                 geminiApiKey: config.geminiApiKey ? encrypt(config.geminiApiKey) : undefined,
                 tavilyApiKey: config.tavilyApiKey ? encrypt(config.tavilyApiKey) : undefined,
+                cliAuthToken: config.cliAuthToken ? encrypt(config.cliAuthToken) : undefined,
                 updatedAt: config.updatedAt,
             };
 
@@ -304,5 +322,169 @@ export class ConfigManager {
         }
 
         return key;
+    }
+
+    static async setCliAuthToken(token: string): Promise<void> {
+        const trimmed = token.trim();
+        if (!trimmed) {
+            console.log(chalk.red("  ✗ Auth token cannot be empty."));
+            return;
+        }
+        try {
+            await keytar.setPassword(KEYTAR_SERVICE, CLI_AUTH_ACCOUNT, trimmed);
+        } catch {
+            // Ignore keytar failures and fall back to file storage
+        }
+        const currentConfig = await this.getConfig().catch(() => ({} as RexaConfig));
+        this.saveConfig({
+            ...currentConfig,
+            cliAuthToken: trimmed,
+            updatedAt: new Date().toISOString(),
+        });
+        console.log(chalk.green("  ✓ Auth token securely saved to ") + chalk.gray(CONFIG_FILE));
+    }
+
+    static async clearCliAuthToken(options?: { silent?: boolean }): Promise<void> {
+        try {
+            await keytar.deletePassword(KEYTAR_SERVICE, CLI_AUTH_ACCOUNT);
+        } catch {
+            // Vault may be unavailable
+        }
+        const currentConfig = await this.getConfig().catch(() => ({} as RexaConfig));
+        this.saveConfig({
+            ...currentConfig,
+            cliAuthToken: undefined,
+            updatedAt: new Date().toISOString(),
+        });
+        if (!options?.silent) {
+            console.log(chalk.green("  ✓ Logged out. Auth token removed."));
+        }
+    }
+
+    static async getCliAuthToken(): Promise<string | undefined> {
+        const envToken = process.env.REXA_CLI_TOKEN;
+        if (envToken && envToken.trim()) {
+            return envToken.trim();
+        }
+
+        const config = await this.getConfig();
+        if (config.cliAuthToken && config.cliAuthToken.trim()) {
+            return config.cliAuthToken.trim();
+        }
+
+        return undefined;
+    }
+
+    static async verifyCliToken(token: string): Promise<{ ok: boolean; networkError?: boolean }> {
+        try {
+            const response = await fetch(REXA_VERIFY_URL, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: "application/json",
+                },
+                signal: AbortSignal.timeout(90_000),
+            });
+
+            if (!response.ok) {
+                return { ok: false };
+            }
+
+            const contentType = response.headers.get("content-type") || "";
+            if (contentType.includes("application/json")) {
+                const body = (await response.json()) as { ok?: boolean };
+                if (typeof body.ok === "boolean") {
+                    return { ok: body.ok };
+                }
+            }
+
+            return { ok: true };
+        } catch {
+            return { ok: false, networkError: true };
+        }
+    }
+
+    static openAuthWebsite(): void {
+        const url = REXA_WEB_URL;
+        try {
+            if (process.platform === "win32") {
+                spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
+            } else if (process.platform === "darwin") {
+                spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+            } else {
+                spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+            }
+        } catch {
+            // User can open the printed URL manually
+        }
+    }
+
+    /**
+     * Ensures a website auth token is present and accepted by the Render verify API.
+     * Prompts with a masked input (same as Gemini) so the agent secret scanner never sees it.
+     */
+    static async ensureCliAuth(): Promise<string> {
+        let token = await this.getCliAuthToken();
+
+        if (token) {
+            const result = await this.verifyCliToken(token);
+            if (result.ok) {
+                return token;
+            }
+            if (result.networkError) {
+                console.log(chalk.red("\n  ✗ Could not reach the REXA server to verify your token."));
+                console.log(chalk.gray(`    ${REXA_VERIFY_URL}`));
+                console.log(chalk.gray("    The server may be waking up. Try again in a moment.\n"));
+                process.exit(1);
+            }
+            await this.clearCliAuthToken({ silent: true });
+            token = undefined;
+            console.log(chalk.yellow("\n  ⚠  Saved auth token is invalid or expired.\n"));
+        }
+
+        this.openAuthWebsite();
+
+        console.log("\n" + chalk.yellow.bold("  ⚠  REXA account login required"));
+        console.log(chalk.gray("  ─────────────────────────────────────────────────────────"));
+        console.log(chalk.white("  Sign in and generate a CLI token:"));
+        console.log("");
+        console.log(chalk.cyan("    ") + chalk.bold.white(REXA_WEB_URL));
+        console.log("");
+        console.log(chalk.white("  Then paste the token below. Tokens expire; generate a new one if needed."));
+        console.log(chalk.gray("  ─────────────────────────────────────────────────────────\n"));
+
+        try {
+            token = await password({
+                message: chalk.bold.yellow("  ❯ Paste your authentication token:"),
+                mask: "*",
+            });
+        } catch {
+            console.log(chalk.gray("\n  peace out.\n"));
+            process.exit(0);
+        }
+
+        token = token?.trim();
+
+        if (!token) {
+            console.log(chalk.red("\n  ✗ No auth token provided. REXA cannot run without it.\n"));
+            process.exit(1);
+        }
+
+        console.log(chalk.gray("  Verifying token with REXA server..."));
+        const result = await this.verifyCliToken(token);
+        if (result.networkError) {
+            console.log(chalk.red("\n  ✗ Could not reach the REXA server to verify your token."));
+            console.log(chalk.gray(`    ${REXA_VERIFY_URL}`));
+            console.log(chalk.gray("    The server may be waking up. Try again in a moment.\n"));
+            process.exit(1);
+        }
+        if (!result.ok) {
+            console.log(chalk.red("\n  ✗ Token is invalid or expired. Generate a new one on the website and try again.\n"));
+            process.exit(1);
+        }
+
+        await this.setCliAuthToken(token);
+        console.log(chalk.green("  ✓ Authenticated.\n"));
+        return token;
     }
 }

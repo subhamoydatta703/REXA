@@ -48,6 +48,23 @@ async function main() {
             process.exit(0);
         });
 
+    program
+        .command("login")
+        .description("Sign in with a CLI token from the REXA website")
+        .action(async () => {
+            await ConfigManager.clearCliAuthToken({ silent: true });
+            await ConfigManager.ensureCliAuth();
+            process.exit(0);
+        });
+
+    program
+        .command("logout")
+        .description("Remove the saved REXA website auth token")
+        .action(async () => {
+            await ConfigManager.clearCliAuthToken();
+            process.exit(0);
+        });
+
     configCmd
         .command("set-tavily-key [key]")
         .description("Set or update optional Tavily Search API key securely")
@@ -105,6 +122,8 @@ async function main() {
             }
             process.exit(0);
         }
+
+        await ConfigManager.ensureCliAuth();
 
         // Resolve Gemini API key dynamically across env vars, ~/.rexa/config.json, or prompt user
         const apiKey = await ConfigManager.ensureApiKey();
