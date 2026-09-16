@@ -14,6 +14,7 @@ const KEYTAR_SERVICE = "rexa";
 const GEMINI_ACCOUNT = "gemini-api-key";
 const TAVILY_ACCOUNT = "tavily-api-key";
 const CLI_AUTH_ACCOUNT = "cli-auth-token";
+const CLI_USER_ID_ACCOUNT = "cli-user-id";
 
 export const REXA_WEB_URL = process.env.REXA_WEB_URL?.trim() || "https://rexa-agent-web.vercel.app/";
 export const REXA_VERIFY_URL =
@@ -59,6 +60,7 @@ export interface RexaConfig {
     geminiApiKey?: string;
     tavilyApiKey?: string;
     cliAuthToken?: string;
+    cliUserId?: string;
     updatedAt?: string;
 }
 
@@ -131,14 +133,16 @@ export class ConfigManager {
     static async getConfig(): Promise<RexaConfig> {
         const fromVault: RexaConfig = {};
         try {
-            const [geminiApiKey, tavilyApiKey, cliAuthToken] = await Promise.all([
+            const [geminiApiKey, tavilyApiKey, cliAuthToken, cliUserId] = await Promise.all([
                 keytar.getPassword(KEYTAR_SERVICE, GEMINI_ACCOUNT),
                 keytar.getPassword(KEYTAR_SERVICE, TAVILY_ACCOUNT),
                 keytar.getPassword(KEYTAR_SERVICE, CLI_AUTH_ACCOUNT),
+                keytar.getPassword(KEYTAR_SERVICE, CLI_USER_ID_ACCOUNT),
             ]);
             if (geminiApiKey) fromVault.geminiApiKey = geminiApiKey;
             if (tavilyApiKey) fromVault.tavilyApiKey = tavilyApiKey;
             if (cliAuthToken) fromVault.cliAuthToken = cliAuthToken;
+            if (cliUserId) fromVault.cliUserId = cliUserId;
         } catch {
             // Fall back to the encrypted legacy file if the OS vault is unavailable.
         }
@@ -156,10 +160,14 @@ export class ConfigManager {
                 if (parsed.cliAuthToken) {
                     parsed.cliAuthToken = decrypt(parsed.cliAuthToken);
                 }
+                if (parsed.cliUserId) {
+                    parsed.cliUserId = decrypt(parsed.cliUserId);
+                }
                 return {
                     geminiApiKey: fromVault.geminiApiKey || parsed.geminiApiKey,
                     tavilyApiKey: fromVault.tavilyApiKey || parsed.tavilyApiKey,
                     cliAuthToken: fromVault.cliAuthToken || parsed.cliAuthToken,
+                    cliUserId: fromVault.cliUserId || parsed.cliUserId,
                     updatedAt: parsed.updatedAt,
                 };
             }
@@ -184,6 +192,7 @@ export class ConfigManager {
                 geminiApiKey: config.geminiApiKey ? encrypt(config.geminiApiKey) : undefined,
                 tavilyApiKey: config.tavilyApiKey ? encrypt(config.tavilyApiKey) : undefined,
                 cliAuthToken: config.cliAuthToken ? encrypt(config.cliAuthToken) : undefined,
+                cliUserId: config.cliUserId ? encrypt(config.cliUserId) : undefined,
                 updatedAt: config.updatedAt,
             };
 
@@ -324,14 +333,20 @@ export class ConfigManager {
         return key;
     }
 
-    static async setCliAuthToken(token: string): Promise<void> {
+    static async setCliAuthToken(token: string, userId?: string, options?: { silent?: boolean }): Promise<void> {
         const trimmed = token.trim();
         if (!trimmed) {
             console.log(chalk.red("  ✗ Auth token cannot be empty."));
             return;
         }
+        const trimmedUserId = userId?.trim() || undefined;
         try {
             await keytar.setPassword(KEYTAR_SERVICE, CLI_AUTH_ACCOUNT, trimmed);
+            if (trimmedUserId) {
+                await keytar.setPassword(KEYTAR_SERVICE, CLI_USER_ID_ACCOUNT, trimmedUserId);
+            } else {
+                await keytar.deletePassword(KEYTAR_SERVICE, CLI_USER_ID_ACCOUNT);
+            }
         } catch {
             // Ignore keytar failures and fall back to file storage
         }
@@ -339,14 +354,18 @@ export class ConfigManager {
         this.saveConfig({
             ...currentConfig,
             cliAuthToken: trimmed,
+            cliUserId: trimmedUserId,
             updatedAt: new Date().toISOString(),
         });
-        console.log(chalk.green("  ✓ Auth token securely saved to ") + chalk.gray(CONFIG_FILE));
+        if (!options?.silent) {
+            console.log(chalk.green("  ✓ Auth token securely saved to ") + chalk.gray(CONFIG_FILE));
+        }
     }
 
     static async clearCliAuthToken(options?: { silent?: boolean }): Promise<void> {
         try {
             await keytar.deletePassword(KEYTAR_SERVICE, CLI_AUTH_ACCOUNT);
+            await keytar.deletePassword(KEYTAR_SERVICE, CLI_USER_ID_ACCOUNT);
         } catch {
             // Vault may be unavailable
         }
@@ -354,6 +373,7 @@ export class ConfigManager {
         this.saveConfig({
             ...currentConfig,
             cliAuthToken: undefined,
+            cliUserId: undefined,
             updatedAt: new Date().toISOString(),
         });
         if (!options?.silent) {
@@ -375,7 +395,15 @@ export class ConfigManager {
         return undefined;
     }
 
-    static async verifyCliToken(token: string): Promise<{ ok: boolean; networkError?: boolean }> {
+    static async getCliUserId(): Promise<string | undefined> {
+        const config = await this.getConfig();
+        if (config.cliUserId && config.cliUserId.trim()) {
+            return config.cliUserId.trim();
+        }
+        return undefined;
+    }
+
+    static async verifyCliToken(token: string): Promise<{ ok: boolean; userId?: string; networkError?: boolean }> {
         try {
             const response = await fetch(REXA_VERIFY_URL, {
                 method: "POST",
@@ -392,13 +420,15 @@ export class ConfigManager {
 
             const contentType = response.headers.get("content-type") || "";
             if (contentType.includes("application/json")) {
-                const body = (await response.json()) as { ok?: boolean; success?: boolean };
+                const body = (await response.json()) as { ok?: boolean; success?: boolean; userId?: unknown };
+                const userId = typeof body.userId === "string" && body.userId.trim() ? body.userId.trim() : undefined;
                 if (typeof body.success === "boolean") {
-                    return { ok: body.success };
+                    return { ok: body.success, userId };
                 }
                 if (typeof body.ok === "boolean") {
-                    return { ok: body.ok };
+                    return { ok: body.ok, userId };
                 }
+                return { ok: true, userId };
             }
 
             return { ok: true };
@@ -432,6 +462,9 @@ export class ConfigManager {
         if (token) {
             const result = await this.verifyCliToken(token);
             if (result.ok) {
+                if (result.userId) {
+                    await this.setCliAuthToken(token, result.userId, { silent: true });
+                }
                 return token;
             }
             if (result.networkError) {
@@ -486,7 +519,7 @@ export class ConfigManager {
             process.exit(1);
         }
 
-        await this.setCliAuthToken(token);
+        await this.setCliAuthToken(token, result.userId);
         console.log(chalk.green("  ✓ Authenticated.\n"));
         return token;
     }
