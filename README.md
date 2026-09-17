@@ -46,7 +46,7 @@ $ bun run rexa
 |_| \_\_____/_/\_\/_/   \_\
 
 +-----------------------------------------------+
-|  REXA CLI  v1.0.0 |  Autonomous Agent Harness  |
+|  REXA CLI  v1.1.0 |  Autonomous Agent Harness  |
 +-----------------------------------------------+
 
   > Yo, it's me... REXA. What's the plan?
@@ -98,7 +98,8 @@ See [Account login](#account-login) and [Configuration & API keys](#configuratio
 - **4-tier web search** — Tavily (if configured) → GitHub API (for `github.com` URLs) → DuckDuckGo → direct webpage fetch.
 - **Dual guardrail system** — a separate Gemini Flash Lite model inspects every user input and every agent output independently.
 - **Secret scanning on every pass** — regex pattern matching plus Shannon entropy analysis to catch high-entropy credential strings.
-- **Website account login** — first run opens the REXA site; a CLI token is verified with the backend, then stored like other credentials.
+- **Website account login** — first run opens the REXA site; a CLI token is verified with the backend, then stored like other credentials. A user id from a successful verify is stored locally and is never printed.
+- **Explicit account memory** — when the user asks to remember something, the `save_memory` tool POSTs `{ "text": "..." }` to the backend. The CLI does not send a user id; the server resolves the user from the Bearer token.
 - **Secure credential storage** — API keys and the CLI auth token are stored via `keytar` in the OS vault: Windows Credential Manager, macOS Keychain, or libsecret on Linux.
 - **Rich CLI** — progress spinners, tool status lines with timing, and markdown-rendered responses in the terminal.
 
@@ -110,7 +111,7 @@ REXA can help with tasks such as:
 - "Add input validation to the user registration flow, then run the type checker."
 - "Find why this test is failing, fix the smallest correct cause, and verify it."
 - "Review this repository for exposed secrets and unsafe file operations."
-- "Clone https://github.com/example/repo in the sandbox, inspect its dependencies, and summarize its security posture."
+- "Remember that I prefer bun." (uses `save_memory` after you are logged in)
 
 ## Account login
 
@@ -118,15 +119,15 @@ REXA requires a website account before the agent starts.
 
 1. Sign in at [https://rexa-agent-web.vercel.app/](https://rexa-agent-web.vercel.app/) and generate a CLI token (tokens are short-lived; generate a new one if it expires).
 2. Paste the token in the CLI when prompted. Do not paste it as a chat message — use the login prompt, `rexa login`, or the vault.
-3. REXA sends the token to the backend (`POST https://rexa-server.onrender.com/api/cli/verify` with `Authorization: Bearer …`). The token is never written to git and is not logged.
+3. REXA sends the token to the backend (`POST https://rexa-server.onrender.com/api/cli/verify` with `Authorization: Bearer …`). The token is never written to git and is not logged. On success the CLI may store a `userId` from the JSON response in the vault; it is never shown in the terminal.
 4. After a successful verify, REXA continues to Gemini API key setup, then the agent.
 
 ```bash
 rexa login    # paste a new token and verify
-rexa logout   # remove the saved token
+rexa logout   # remove the saved token and stored user id
 ```
 
-Saved tokens are stored the same way as Gemini keys (`keytar`, with encrypted fallback in `~/.rexa/config.json`). Each start re-checks the token with the server. If it is expired, revoked, or you generated a new one on the site, REXA asks you to paste again.
+Saved tokens (and the associated user id) are stored the same way as Gemini keys (`keytar`, with encrypted fallback in `~/.rexa/config.json`). Each start re-checks the token with the server. If it is expired, revoked, or you generated a new one on the site, REXA asks you to paste again.
 
 Paste the token only at the login prompt. Input guardrails will reject a token pasted into the agent chat.
 
@@ -142,7 +143,8 @@ Paste the token only at the login prompt. Input guardrails will reject a token p
 | `TVLY_API_KEY` or `TAVILY_API_KEY` | Optional Tavily search |
 | `REXA_CLI_TOKEN` | Optional CLI auth token (otherwise stored in the vault) |
 | `REXA_WEB_URL` | Override the site opened for login (default: the REXA website) |
-| `REXA_VERIFY_URL` | Override the token verify endpoint (default: Render API) |
+| `REXA_VERIFY_URL` | Override the token verify endpoint (default: `https://rexa-server.onrender.com/api/cli/verify`) |
+| `REXA_MEMORY_URL` | Override the memory save endpoint (default: `https://rexa-server.onrender.com/api/cli/memory`) |
 
 The website token and the Gemini key can also be entered interactively and are stored in the OS credential manager. On Windows it is stored in Windows Credential Manager; on macOS and Linux, `keytar` uses the platform credential service.
 
@@ -244,6 +246,7 @@ This does not delete files from the host project directory.
 | `get_project_tree` | Inspect the project directory tree |
 | File tools | Find, read, create, edit, append, list, delete |
 | `search` | Tavily > GitHub API > DuckDuckGo > direct fetch |
+| `save_memory` | Save an explicit user fact to the REXA account (`POST /api/cli/memory`) |
 
 ## Project layout
 
@@ -310,6 +313,10 @@ Tavily is optional; without a key REXA falls back to GitHub API, DuckDuckGo, and
 ### Login or token verify failed
 
 Generate a new CLI token on the [REXA website](https://rexa-agent-web.vercel.app/) and run `rexa login`. The free Render API may take up to about a minute to wake; wait and retry if the CLI cannot reach the verify URL.
+
+### Memory save failed
+
+You must be logged in. Say explicitly that you want something remembered (the agent uses `save_memory`). The backend must expose `POST /api/cli/memory` and accept `Authorization: Bearer …` with JSON `{ "text": "..." }`. A 401 means run `rexa login` again.
 
 ### Reset credentials
 

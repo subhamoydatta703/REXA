@@ -8,6 +8,7 @@ import { executeCommand } from "./tools/executeTools";
 import { getProjectTree } from "./tools/FileTools";
 import { gitCommand } from "./tools/GitTools";
 import { search } from "./tools/SearchTool";
+import { saveMemory } from "./tools/MemoryTools";
 import { ToolRegistry } from "./tools/ToolRegistry";
 import { ConfigManager } from "./config/ConfigManager";
 
@@ -20,7 +21,7 @@ async function main() {
     program
         .name("rexa")
         .description("REXA AI Agent CLI")
-        .version("1.0.0")
+        .version("1.1.0")
         .option("-m, --max-steps <number>", "Max steps per task", "60")
         .option("-n, --name <string>", "Agent name", "REXA")
         .option("-k, --set-key [string]", "Set or update Gemini API key (masked input if omitted)")
@@ -138,6 +139,7 @@ async function main() {
         toolRegistry.registerTool(executeCommand);
         toolRegistry.registerTool(getProjectTree);
         toolRegistry.registerTool(search);
+        toolRegistry.registerTool(saveMemory);
 
         const agent = new Agent(
             llm,
