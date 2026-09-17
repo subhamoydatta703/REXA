@@ -25,7 +25,7 @@ export class AgentUI {
 
         // Plain text components for accurate visible length calculation (ignoring ANSI codes)
         const label = "REXA CLI";
-        const version = "v1.0.0";
+        const version = "v1.1.0";
         const tag = "Autonomous Agent Harness";
 
         const plainText = `${label}  ${version}  │  ${tag}`;

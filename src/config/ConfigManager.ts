@@ -19,6 +19,8 @@ const CLI_USER_ID_ACCOUNT = "cli-user-id";
 export const REXA_WEB_URL = process.env.REXA_WEB_URL?.trim() || "https://rexa-agent-web.vercel.app/";
 export const REXA_VERIFY_URL =
     process.env.REXA_VERIFY_URL?.trim() || "https://rexa-server.onrender.com/api/cli/verify";
+export const REXA_MEMORY_URL =
+    process.env.REXA_MEMORY_URL?.trim() || "https://rexa-server.onrender.com/api/cli/memory";
 
 // Kept only to read configurations written by the old implementation.
 const LEGACY_MACHINE_KEY = crypto
