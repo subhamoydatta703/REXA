@@ -36,25 +36,32 @@ export async function postCliMemory(
         });
 
         let body: { success?: boolean; message?: string } = {};
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("application/json")) {
+        try {
             body = (await response.json()) as { success?: boolean; message?: string };
+        } catch {
+            body = {};
         }
 
-        if (response.status === 401) {
-            return { success: false, message: "Auth expired. Run rexa login and try again." };
-        }
+        const apiMessage = typeof body.message === "string" ? body.message.trim() : "";
 
         if (!response.ok || body.success === false) {
+            if (response.status === 401) {
+                return {
+                    success: false,
+                    message: apiMessage
+                        ? `${apiMessage}. Run rexa login and try again.`
+                        : "Invalid or expired token. Run rexa login and try again.",
+                };
+            }
             return {
                 success: false,
-                message: body.message?.trim() || "Could not save memory.",
+                message: apiMessage || "Could not save memory.",
             };
         }
 
         return {
             success: true,
-            message: body.message?.trim() || "Saved to memory.",
+            message: apiMessage || "Data saved in memory",
         };
     } catch {
         return {
