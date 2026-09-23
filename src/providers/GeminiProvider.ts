@@ -15,15 +15,6 @@ export class GeminiProvider implements LLMProvider {
     async generate(messages: Message[], tools: Tool[], systemInstruction?: string): Promise<LLMResponse> {
 
         try {
-            if (tools.length === 0) {
-                return {
-                    role: "assistant",
-                    text: "No tools found",
-                    rawParts: [],
-                    toolcalls: []
-                };
-            }
-
             const functionDeclarations = tools.map(tool => ({
                 name: tool.name,
                 description: tool.description,
@@ -49,12 +40,14 @@ export class GeminiProvider implements LLMProvider {
                 contents,
                 config: {
                     systemInstruction: systemInstruction,
-                    toolConfig: {
-                        functionCallingConfig: {
-                            mode: FunctionCallingConfigMode.AUTO
-                        }
-                    },
-                    tools: [{ functionDeclarations }]
+                    ...(tools.length > 0 ? {
+                        toolConfig: {
+                            functionCallingConfig: {
+                                mode: FunctionCallingConfigMode.AUTO
+                            }
+                        },
+                        tools: [{ functionDeclarations }],
+                    } : {}),
                 },
                 
             });

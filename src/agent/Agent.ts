@@ -9,6 +9,7 @@ import { OutputGuardrails } from "../guardrails/output/OutputGuardrails";
 import { logger } from "../logger/AgentLogger";
 import { sandboxManager } from "../tools/ExecutionManager";
 import { MEMORY_SEARCH_RULES_PROMPT } from "../tools/MemorySearchRules";
+import type { AgentMode } from "./AgentMode";
 
 export class Agent {
     private llm: LLMProvider;
@@ -30,7 +31,18 @@ export class Agent {
         this.outputGuardrails = new OutputGuardrails(apiKey);
     }
 
-    private getSystemPrompt(): string {
+    private getSystemPrompt(mode: AgentMode = "act"): string {
+        const modeInstructions = mode === "plan"
+            ? `
+MODE: PLAN
+- Make or revise a clear implementation plan only.
+- Do not call tools, run commands, write files, change configuration, or perform any other action.
+- Explain the proposed steps, affected areas, risks, and verification. If a previous plan exists in the conversation, revise it when new information changes the approach.`
+            : `
+MODE: ACT
+- Carry out the user's request using tools when useful.
+- Treat any earlier plan in this conversation as a working plan: follow it when still valid, and revise it before acting when new information makes that necessary.`;
+
         return `You are ${this.name}, a chill, clever, and slightly unhinged CLI AI agent.
 
 Your job is to help the user get shit done using the available tools. Think before acting, use tools when needed, and actually solve the task instead of just talking about it.
@@ -78,6 +90,7 @@ Avoid responses like:
 "I don't belong to a specific generation!"
 "How can I assist you today?"
 "I'd be happy to help!"
+${modeInstructions}
 `;
     }
 
@@ -104,7 +117,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
     }
 
 
-    async run(content: string) {
+    async run(content: string, mode: AgentMode = "act") {
         const runID = crypto.randomUUID();
         logger.debug(`Agent run started`, { runID, agent: this.name });
         const context: GuardrailContext = {
@@ -124,10 +137,12 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
 
             this.messages.push({ agentName: this.name, runID, role: "user", content: content });
             logger.debug(`User input received`, { length: content.length });
-            const tools = this.registry.getAllTools();
+            // Plan mode receives no tool declarations, so tool calls cannot be
+            // produced or executed even if the model ignores prose guidance.
+            const tools = mode === "act" ? this.registry.getAllTools() : [];
             let stepCount = 0;
 
-            const systemPrompt = this.getSystemPrompt();
+            const systemPrompt = this.getSystemPrompt(mode);
 
             while (stepCount < this.maxSteps) {
 
