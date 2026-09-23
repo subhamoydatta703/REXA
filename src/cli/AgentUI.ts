@@ -8,6 +8,8 @@ import path from "node:path";
 import { setActiveSpinner } from "./TerminalState";
 import { marked } from "marked";
 import { markedTerminal } from "marked-terminal";
+import * as readline from "node:readline";
+import type { AgentMode, PromptInput } from "../agent/AgentMode";
 
 export class AgentUI {
     
@@ -105,12 +107,67 @@ export class AgentUI {
 
     //   Prompt for user input
     
-    static async getPromptInput(): Promise<string> {
-        return await input({
-            message: chalk.cyan.bold(" ❯"),
-            theme: {
-                prefix: "",
-            },
+    static async getPromptInput(initialMode: AgentMode): Promise<PromptInput> {
+        if (!process.stdin.isTTY || !process.stdout.isTTY) {
+            const value = await input({
+                message: chalk.cyan.bold(" ❯"),
+                theme: { prefix: "" },
+            });
+            return { value, mode: initialMode };
+        }
+
+        return new Promise((resolve, reject) => {
+            const stdin = process.stdin;
+            const stdout = process.stdout;
+            const wasRaw = stdin.isRaw;
+            let mode = initialMode;
+            let value = "";
+
+            const render = () => {
+                const modeLabel = mode === "plan" ? chalk.white.bold("PLAN") : chalk.yellow.bold("ACT");
+                stdout.clearLine(0);
+                stdout.cursorTo(0);
+                stdout.write(` ${chalk.cyan.bold("❯")} ${value}${chalk.gray("  [")}${modeLabel}${chalk.gray(" · Tab switches]")}`);
+            };
+
+            const cleanup = () => {
+                stdin.off("keypress", onKeypress);
+                if (!wasRaw) stdin.setRawMode(false);
+            };
+
+            const onKeypress = (character: string, key: readline.Key) => {
+                if (key.ctrl && key.name === "c") {
+                    cleanup();
+                    reject(new Error("Prompt cancelled."));
+                    return;
+                }
+                if (key.name === "tab") {
+                    mode = mode === "plan" ? "act" : "plan";
+                    render();
+                    return;
+                }
+                if (key.name === "return" || key.name === "enter") {
+                    cleanup();
+                    stdout.write("\n");
+                    resolve({ value, mode });
+                    return;
+                }
+                if (key.name === "backspace") {
+                    value = value.slice(0, -1);
+                    render();
+                    return;
+                }
+                if (!key.ctrl && !key.meta && character) {
+                    value += character;
+                    render();
+                }
+            };
+
+            readline.emitKeypressEvents(stdin);
+            stdin.setRawMode(true);
+            stdin.resume();
+            stdin.on("keypress", onKeypress);
+            render();
         });
     }
 

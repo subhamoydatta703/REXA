@@ -1,6 +1,7 @@
 import type { Agent } from "../agent/Agent";
 import { AgentUI } from "./AgentUI";
 import { clearActiveSpinner } from "./TerminalState";
+import type { AgentMode } from "../agent/AgentMode";
 
 export class CLI {
     constructor(private agent: Agent) {}
@@ -8,11 +9,14 @@ export class CLI {
     async start() {
         AgentUI.displayBanner();
         AgentUI.displayWorkspace(process.cwd());
+        let mode: AgentMode = "act";
 
         while (true) {
             let userInput: string;
             try {
-                userInput = await AgentUI.getPromptInput();
+                const prompt = await AgentUI.getPromptInput(mode);
+                userInput = prompt.value;
+                mode = prompt.mode;
             } catch {
                 AgentUI.renderExit();
                 break;
@@ -30,7 +34,7 @@ export class CLI {
             const spinner = AgentUI.startSpinner();
 
             try {
-                const response = await this.agent.run(userInput);
+                const response = await this.agent.run(userInput, mode);
                 spinner.stop();
                 clearActiveSpinner(spinner);
                 AgentUI.renderResponse(response?.text || "");
