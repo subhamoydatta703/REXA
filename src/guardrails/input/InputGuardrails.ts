@@ -3,7 +3,7 @@ import type { GuardrailContext } from "../types/GuardrailContext";
 import { SecretScanner } from "../types/SecretScanner";
 import { buildInputGuardrailPrompt } from "./InputGuardrailPrompt";
 import { GoogleGenAI } from "@google/genai";
-import { logger } from "../../logger/AgentLogger";
+// import { logger } from "../../logger/AgentLogger";
 
 export class InputGuardrails {
     private aiGuard?: GoogleGenAI;
@@ -11,7 +11,10 @@ export class InputGuardrails {
     constructor(apiKey?: string) {
         const key = apiKey || process.env.GEMINI_GUARD_API_KEY || process.env.GEMINI_API_KEY;
         if (key && key.trim()) {
-            this.aiGuard = new GoogleGenAI({ apiKey: key.trim() });
+            this.aiGuard = new GoogleGenAI({
+                apiKey: key.trim(),
+                
+            });
         }
     }
 
@@ -19,8 +22,20 @@ export class InputGuardrails {
         if (!this.aiGuard) {
             const key = process.env.GEMINI_GUARD_API_KEY || process.env.GEMINI_API_KEY;
             if (key && key.trim()) {
-                this.aiGuard = new GoogleGenAI({ apiKey: key.trim() });
+                this.aiGuard = new GoogleGenAI({
+                    apiKey: key.trim(),
+                    
+                });
             }
+        }
+
+        const trimmed = context.input.trim().toLowerCase();
+        // Fast-path: Common greetings and simple identity questions bypass AI guardrail call
+        if (/^(yo|hi|hello|hey|sup|what is your name\??|who are you\??|how are you\??|who am i\??)$/i.test(trimmed)) {
+            return {
+                isSafe: true,
+                reason: "Trivial input",
+            };
         }
 
         if (context.input.length > 1000) {
@@ -54,9 +69,10 @@ export class InputGuardrails {
                 };
             }
         } catch (error) {
-            logger.debug("Input guardrail AI check failed, falling back to safe", {
-                error: error instanceof Error ? error.message : String(error),
-            });
+            // logger.debug("Input guardrail AI check failed, falling back to safe", {
+            //     error: error instanceof Error ? error.message : String(error),
+            // });
+            console.error(error)
         }
 
         return {
@@ -73,7 +89,7 @@ export class InputGuardrails {
             const prompt = buildInputGuardrailPrompt(userQuery);
 
             const response = await this.aiGuard.models.generateContent({
-                model: "gemini-3.5-flash-lite",
+                model: "gemini-3.8-flash",
                 contents: prompt,
             });
 
@@ -102,9 +118,10 @@ export class InputGuardrails {
                     : undefined,
             };
         } catch (error) {
-            logger.debug("Error at inputGuardrail", {
-                error: error instanceof Error ? error.message : String(error),
-            });
+            // logger.debug("Error at inputGuardrail", {
+            //     error: error instanceof Error ? error.message : String(error),
+            // });
+            console.error(error);
             throw error;
         }
     };

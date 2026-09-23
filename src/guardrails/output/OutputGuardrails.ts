@@ -11,7 +11,10 @@ export class OutputGuardrails {
     constructor(apiKey?: string) {
         const key = apiKey || process.env.GEMINI_GUARD_API_KEY || process.env.GEMINI_API_KEY;
         if (key && key.trim()) {
-            this.aiGuard = new GoogleGenAI({ apiKey: key.trim() });
+            this.aiGuard = new GoogleGenAI({
+                apiKey: key.trim(),
+                
+            });
         }
     }
 
@@ -19,7 +22,10 @@ export class OutputGuardrails {
         if (!this.aiGuard) {
             const key = process.env.GEMINI_GUARD_API_KEY || process.env.GEMINI_API_KEY;
             if (key && key.trim()) {
-                this.aiGuard = new GoogleGenAI({ apiKey: key.trim() });
+                this.aiGuard = new GoogleGenAI({
+                    apiKey: key.trim(),
+                    
+                });
             }
         }
 
@@ -58,7 +64,7 @@ export class OutputGuardrails {
             const prompt = buildOutputGuardrailPrompt(assistantResponse);
 
             const response = await this.aiGuard.models.generateContent({
-                model: "gemini-3.5-flash-lite",
+                model: "gemini-3.8-flash",
                 contents: prompt,
             });
 

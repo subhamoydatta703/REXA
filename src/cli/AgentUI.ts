@@ -156,11 +156,12 @@ export class AgentUI {
     
     static renderError(error: Error): void {
         console.log("");
-        const friendly = toAgentFriendlyError(error);
-        console.log("  " + this.accentTheme("rexa") + chalk.gray(" · ") + chalk.yellow(friendly.userMessage));
-        if (process.env.LOG_LEVEL === "debug" && error.stack) {
-            console.log(chalk.gray(`\n${error.stack}`));
-        }
+        console.log("  " + chalk.red("err") + chalk.gray(" · ") + chalk.red(error.message));
+        // const friendly = toAgentFriendlyError(error);
+        // console.log("  " + this.accentTheme("rexa") + chalk.gray(" · ") + chalk.yellow(friendly.userMessage));
+        // if (process.env.LOG_LEVEL === "debug" && error.stack) {
+        //     console.log(chalk.gray(`\n${error.stack}`));
+        // }
         console.log("");
     }
 }

@@ -4,8 +4,6 @@ import { FunctionCallingConfigMode, GoogleGenAI, type Part } from "@google/genai
 import type { LLMResponse } from "../providers/LLMResponse";
 import type { Tool } from "../tools/ToolRegistry";
 import * as z from "zod";
-import { logger } from "../logger/AgentLogger";
-import { toAgentFriendlyError } from "../utils/ErrorTranslator";
 
 export class GeminiProvider implements LLMProvider {
     private client: GoogleGenAI;
@@ -47,7 +45,7 @@ export class GeminiProvider implements LLMProvider {
             });
 
             const response = await this.client.models.generateContent({
-                model: "gemini-3.5-flash-lite",
+                model: "gemini-3.6-flash",
                 contents,
                 config: {
                     systemInstruction: systemInstruction,
@@ -69,6 +67,9 @@ export class GeminiProvider implements LLMProvider {
                 .map(p => p.text)
                 .join("");
 
+
+console.log("Extracted text in gemini provider",extractedText);
+
             return {
                 role: "assistant",
                 text: extractedText,
@@ -81,21 +82,21 @@ export class GeminiProvider implements LLMProvider {
             };
 
         } catch (error) {
-            logger.debug("LLM generation failed", {
-                error: error instanceof Error ? error.message : String(error),
-            });
 
-            const friendly = toAgentFriendlyError(error);
+            console.error("LLM generation failed:", error);
 
             return {
                 role: "assistant",
-                text: friendly.userMessage,
+                text: "",
                 rawParts: [],
                 toolcalls: [],
                 error: {
                     type: "LLM_GENERATION_FAILED",
-                    message: friendly.userMessage,
-                },
+                    message:
+                        error instanceof Error
+                            ? error.message
+                            : String(error)
+                }
             };
         }
     }
@@ -103,4 +104,3 @@ export class GeminiProvider implements LLMProvider {
 
 
 }
-

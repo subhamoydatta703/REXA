@@ -8,6 +8,7 @@ import { executeCommand } from "./tools/executeTools";
 import { getProjectTree } from "./tools/FileTools";
 import { gitCommand } from "./tools/GitTools";
 import { search } from "./tools/SearchTool";
+
 import { saveMemory, searchMemory } from "./tools/MemoryTools";
 import { ToolRegistry } from "./tools/ToolRegistry";
 import { ConfigManager } from "./config/ConfigManager";
