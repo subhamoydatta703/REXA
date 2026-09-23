@@ -8,13 +8,51 @@ import path from "node:path";
 import { setActiveSpinner } from "./TerminalState";
 import { marked } from "marked";
 import { markedTerminal } from "marked-terminal";
-import { toAgentFriendlyError } from "../utils/ErrorTranslator";
 
 export class AgentUI {
     
     private static theme = gradient(["#f9f908", "#A1A1AA", "#52525B"]);
     
     private static accentTheme = gradient(["#ffff09ff","#ffff09ff"]);
+
+    private static getErrorMessage(error: unknown): string {
+        const details = error && typeof error === "object" ? error as Record<string, unknown> : {};
+        const nested = details.error && typeof details.error === "object"
+            ? details.error as Record<string, unknown>
+            : {};
+        const message = [details.message, nested.message]
+            .filter((value): value is string => typeof value === "string")
+            .join(" ")
+            .toLowerCase();
+        const status = details.status ?? details.statusCode ?? details.code ?? nested.status ?? nested.code;
+
+        if (status === 401 || status === 403 || /api[_ ]key|unauthenticated|permission denied/.test(message)) {
+            return "Looks like your Gemini API key isn't working or expired. Run 'rexa config set-key' to update it, bro.";
+        }
+        if (status === 429 || /rate limit|resource exhausted|quota exceeded/.test(message)) {
+            return "Hold up, Gemini hit a rate limit. Give it a moment, then try again, bro.";
+        }
+        if (status === 503 || /high demand|overloaded|service unavailable|temporarily unavailable/.test(message)) {
+            return "Gemini is under heavy load right now. Give it a sec and run that again, bro.";
+        }
+        if (status === 504 || /timed out|deadline exceeded/.test(message)) {
+            return "Gemini took too long to answer. Give it another shot, bro.";
+        }
+        if (/fetch failed|network error|econnrefused|enotfound|ehostunreach|connection (?:refused|reset)/.test(message)) {
+            return "Can't connect to Gemini right now. Check your internet connection or VPN and let's try again.";
+        }
+        if (/model.*not found|unsupported model|invalid model/.test(message)) {
+            return "Gemini couldn't find that model. Double-check the model name in your config, bro.";
+        }
+        if (/context|token limit|input token count/.test(message)) {
+            return "This conversation got too long for the model. Start a fresh session or trim the history, bro.";
+        }
+        if (/potential secret detected|input too long|guardrail returned an invalid classification/.test(message)) {
+            return error instanceof Error ? error.message : "That request was blocked by a safety check.";
+        }
+
+        return "Ran into a bump while processing that. Lemme know if you want me to try again.";
+    }
 
     // Renders clear screen, monochrome ASCII logo, and pixel-perfect ANSI-safe box frame.
     static displayBanner(): void {
@@ -154,14 +192,14 @@ export class AgentUI {
     }
 
     
-    static renderError(error: Error): void {
+    static renderError(error: unknown): void {
+        const message = this.getErrorMessage(error);
         console.log("");
-        console.log("  " + chalk.red("err") + chalk.gray(" · ") + chalk.red(error.message));
-        // const friendly = toAgentFriendlyError(error);
-        // console.log("  " + this.accentTheme("rexa") + chalk.gray(" · ") + chalk.yellow(friendly.userMessage));
-        // if (process.env.LOG_LEVEL === "debug" && error.stack) {
-        //     console.log(chalk.gray(`\n${error.stack}`));
-        // }
+        console.log("  " + this.accentTheme("rexa") + chalk.gray(" · ") + chalk.yellow(message));
+        if (process.env.LOG_LEVEL === "debug" && error instanceof Error && error.stack) {
+            console.log(chalk.gray(`\n${error.stack}`));
+        }
         console.log("");
     }
+
 }
