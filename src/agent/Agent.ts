@@ -133,6 +133,11 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                 stepCount++;
                 const response = await this.llm.generate(this.messages, tools, systemPrompt);
 
+                if (response.error) {
+                    this.messages.push({ role: "assistant", content: response.text });
+                    return response;
+                }
+
                 if (!response.toolcalls || response.toolcalls.length === 0) {
                     this.messages.push({ role: "assistant", content: response.text });
 

@@ -3,6 +3,7 @@ import { buildOutputGuardrailPrompt} from "./OutputGuardrailPrompt";
 import type { LLMResponse } from "../../providers/LLMResponse";
 import type { GuardrailResult } from "../types/GuardrailResult";
 import { SecretScanner } from "../types/SecretScanner";
+import { logger } from "../../logger/AgentLogger";
 
 export class OutputGuardrails {
     private aiGuard?: GoogleGenAI;
@@ -39,7 +40,9 @@ export class OutputGuardrails {
         try {
             return await this.outputGuardrail(response);
         } catch (error) {
-            console.warn("Output guardrail AI check failed, falling back to safe:", error instanceof Error ? error.message : String(error));
+            logger.debug("Output guardrail AI check failed, falling back to safe", {
+                error: error instanceof Error ? error.message : String(error),
+            });
             return {
                 isSafe: true,
                 reason: "Output validation passed",
@@ -72,7 +75,9 @@ export class OutputGuardrails {
                 reason: parsed.reason,
             };
         } catch (error) {
-            console.error("Error at outputGuardrail: ", error);
+            logger.debug("Error at outputGuardrail", {
+                error: error instanceof Error ? error.message : String(error),
+            });
             throw error;
         }
     }

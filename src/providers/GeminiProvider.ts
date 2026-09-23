@@ -4,6 +4,8 @@ import { FunctionCallingConfigMode, GoogleGenAI, type Part } from "@google/genai
 import type { LLMResponse } from "../providers/LLMResponse";
 import type { Tool } from "../tools/ToolRegistry";
 import * as z from "zod";
+import { logger } from "../logger/AgentLogger";
+import { toAgentFriendlyError } from "../utils/ErrorTranslator";
 
 export class GeminiProvider implements LLMProvider {
     private client: GoogleGenAI;
@@ -79,21 +81,21 @@ export class GeminiProvider implements LLMProvider {
             };
 
         } catch (error) {
+            logger.debug("LLM generation failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
 
-            console.error("LLM generation failed:", error);
+            const friendly = toAgentFriendlyError(error);
 
             return {
                 role: "assistant",
-                text: "",
+                text: friendly.userMessage,
                 rawParts: [],
                 toolcalls: [],
                 error: {
                     type: "LLM_GENERATION_FAILED",
-                    message:
-                        error instanceof Error
-                            ? error.message
-                            : String(error)
-                }
+                    message: friendly.userMessage,
+                },
             };
         }
     }
