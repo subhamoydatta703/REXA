@@ -3,6 +3,7 @@ import type { GuardrailContext } from "../types/GuardrailContext";
 import { SecretScanner } from "../types/SecretScanner";
 import { buildInputGuardrailPrompt } from "./InputGuardrailPrompt";
 import { GoogleGenAI } from "@google/genai";
+import { logger } from "../../logger/AgentLogger";
 
 export class InputGuardrails {
     private aiGuard?: GoogleGenAI;
@@ -53,7 +54,9 @@ export class InputGuardrails {
                 };
             }
         } catch (error) {
-            console.warn("Input guardrail AI check failed, falling back to safe:", error instanceof Error ? error.message : String(error));
+            logger.debug("Input guardrail AI check failed, falling back to safe", {
+                error: error instanceof Error ? error.message : String(error),
+            });
         }
 
         return {
@@ -99,7 +102,9 @@ export class InputGuardrails {
                     : undefined,
             };
         } catch (error) {
-            console.error("Error at inputGuardrail: ", error);
+            logger.debug("Error at inputGuardrail", {
+                error: error instanceof Error ? error.message : String(error),
+            });
             throw error;
         }
     };

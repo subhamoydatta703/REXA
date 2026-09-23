@@ -8,6 +8,7 @@ import path from "node:path";
 import { setActiveSpinner } from "./TerminalState";
 import { marked } from "marked";
 import { markedTerminal } from "marked-terminal";
+import { toAgentFriendlyError } from "../utils/ErrorTranslator";
 
 export class AgentUI {
     
@@ -155,7 +156,11 @@ export class AgentUI {
     
     static renderError(error: Error): void {
         console.log("");
-        console.log("  " + chalk.red("err") + chalk.gray(" · ") + chalk.red(error.message));
+        const friendly = toAgentFriendlyError(error);
+        console.log("  " + this.accentTheme("rexa") + chalk.gray(" · ") + chalk.yellow(friendly.userMessage));
+        if (process.env.LOG_LEVEL === "debug" && error.stack) {
+            console.log(chalk.gray(`\n${error.stack}`));
+        }
         console.log("");
     }
 }
