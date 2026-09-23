@@ -8,7 +8,7 @@ import { executeCommand } from "./tools/executeTools";
 import { getProjectTree } from "./tools/FileTools";
 import { gitCommand } from "./tools/GitTools";
 import { search } from "./tools/SearchTool";
-import { saveMemory } from "./tools/MemoryTools";
+import { saveMemory, searchMemory } from "./tools/MemoryTools";
 import { ToolRegistry } from "./tools/ToolRegistry";
 import { ConfigManager } from "./config/ConfigManager";
 
@@ -140,6 +140,7 @@ async function main() {
         toolRegistry.registerTool(getProjectTree);
         toolRegistry.registerTool(search);
         toolRegistry.registerTool(saveMemory);
+        toolRegistry.registerTool(searchMemory);
 
         const agent = new Agent(
             llm,
