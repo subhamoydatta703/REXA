@@ -86,8 +86,31 @@ Type a task (for example `Find why the auth test is failing and fix it.`) and pr
 
 See [Account login](#account-login) and [Configuration & API keys](#configuration--api-keys) for the credential vault, and [Docker sandbox](#docker-sandbox) for how commands are isolated.
 
+### Plan and Act modes
+
+REXA starts in **Act** mode. At an interactive prompt, press `Tab` to switch between modes before pressing Enter; the active mode is displayed beside the prompt and remains selected for the next turn.
+
+| Mode | Behavior |
+| --- | --- |
+| **Plan** | Produces or revises an implementation plan only. REXA receives no tool declarations in this mode, so it cannot execute commands, edit files, change configuration, or invoke any registered tool. |
+| **Act** | Carries out the request with its normal tools. It uses an earlier plan in the conversation when it remains valid and revises the plan before acting when new information changes the approach. |
+
+For example, press `Tab` to enter Plan mode, ask `Plan the authentication refactor and its tests`, review the response, then press `Tab` again to return to Act mode and ask REXA to implement it.
+
+### Persistent memory
+
+REXA exposes two account-backed memory tools:
+
+- `save_memory` stores a short fact or preference only when the user explicitly asks REXA to remember it.
+- `search_memory` retrieves saved preferences, personal conventions, past decisions, or other facts when they are relevant.
+
+Memory is intentionally selective. REXA should search it for explicit recall requests, missing personal preferences, or cross-session decisions. It should not search memory for routine coding tasks, repository or Git questions, fully specified requests, general programming questions, greetings, or secrets and credentials. Saving a memory does not trigger a memory search.
+
+Memory entries and search queries are trimmed and limited to 8,192 characters. Memory must not contain chat logs, file contents, API keys, tokens, passwords, or other secrets. Both tools require an authenticated CLI session; run `rexa login` first.
+
 ## Capabilities
 
+- **Plan / Act workflow**: switch modes with `Tab`; Plan mode is tool-free and creates or revises plans only, while Act mode can execute the approved workflow.
 - **Continuous agent loop** — up to 60 steps per task (configurable via `--max-steps`).
 - **Plan reflection** — the agent reflects on its own proposed tool calls before executing; bad or redundant plans are discarded and re-generated.
 - **Autonomous coding workflow** — understand context, create files, apply targeted edits, and re-read the file after every change to reason from the actual result.
@@ -99,7 +122,7 @@ See [Account login](#account-login) and [Configuration & API keys](#configuratio
 - **Dual guardrail system** — a separate Gemini Flash Lite model inspects every user input and every agent output independently.
 - **Secret scanning on every pass** — regex pattern matching plus Shannon entropy analysis to catch high-entropy credential strings.
 - **Website account login** — first run opens the REXA site; a CLI token is verified with the backend, then stored like other credentials. A user id from a successful verify is stored locally and is never printed.
-- **Explicit account memory** — when the user asks to remember something, the `save_memory` tool POSTs `{ "text": "..." }` to the backend. The CLI does not send a user id; the server resolves the user from the Bearer token.
+- **Explicit account memory** — `save_memory` and `search_memory` use the authenticated Bearer token to save and selectively retrieve user facts and preferences. The CLI does not send a user id; the server resolves the user from the token.
 - **Secure credential storage** — API keys and the CLI auth token are stored via `keytar` in the OS vault: Windows Credential Manager, macOS Keychain, or libsecret on Linux.
 - **Rich CLI** — progress spinners, tool status lines with timing, and markdown-rendered responses in the terminal.
 
@@ -145,6 +168,7 @@ Paste the token only at the login prompt. Input guardrails will reject a token p
 | `REXA_WEB_URL` | Override the site opened for login (default: the REXA website) |
 | `REXA_VERIFY_URL` | Override the token verify endpoint (default: `https://rexa-server.onrender.com/api/cli/verify`) |
 | `REXA_MEMORY_URL` | Override the memory save endpoint (default: `https://rexa-server.onrender.com/api/cli/memory`) |
+| `REXA_MEMORY_SEARCH_URL` | Override the memory search endpoint (default: `https://rexa-server.onrender.com/api/cli/memory/search`) |
 
 The website token and the Gemini key can also be entered interactively and are stored in the OS credential manager. On Windows it is stored in Windows Credential Manager; on macOS and Linux, `keytar` uses the platform credential service.
 
@@ -246,14 +270,15 @@ This does not delete files from the host project directory.
 | `get_project_tree` | Inspect the project directory tree |
 | File tools | Find, read, create, edit, append, list, delete |
 | `search` | Tavily > GitHub API > DuckDuckGo > direct fetch |
-| `save_memory` | Save an explicit user fact to the REXA account (`POST /api/cli/memory`) |
+| `save_memory` | Save an explicit user fact or preference to the REXA account (`POST /api/cli/memory`) |
+| `search_memory` | Selectively search saved user facts and preferences (`POST /api/cli/memory/search`) |
 
 ## Project layout
 
 ```text
 .
 +-- src/
-|   +-- agent/          # Agent loop, plan reflection, messages
+|   +-- agent/          # Agent loop, Plan/Act modes, plan reflection, messages
 |   +-- cli/            # Interactive terminal UI
 |   +-- config/         # Credentials and configuration (keytar)
 |   +-- guardrails/     # Input/output safety, secret scanning
@@ -316,7 +341,11 @@ Generate a new CLI token on the [REXA website](https://rexa-agent-web.vercel.app
 
 ### Memory save failed
 
-You must be logged in. Say explicitly that you want something remembered (the agent uses `save_memory`). The backend must expose `POST /api/cli/memory` and accept `Authorization: Bearer …` with JSON `{ "text": "..." }`. A 401 means run `rexa login` again.
+You must be logged in. Say explicitly that you want something remembered (the agent uses `save_memory`). The backend must expose `POST /api/cli/memory` and accept `Authorization: Bearer …` with JSON `{ "text": "..." }`. Memory text is limited to 8,192 characters. A 401 means run `rexa login` again.
+
+### Memory search failed
+
+The agent searches memory only for explicit recall, personal preferences, or cross-session decisions. Confirm that `REXA_MEMORY_SEARCH_URL` points to the memory search endpoint and that you are logged in. The request uses `POST /api/cli/memory/search` with `Authorization: Bearer …` and JSON `{ "query": "..." }`.
 
 ### Reset credentials
 
