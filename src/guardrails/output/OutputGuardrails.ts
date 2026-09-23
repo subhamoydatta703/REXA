@@ -58,7 +58,7 @@ export class OutputGuardrails {
             const prompt = buildOutputGuardrailPrompt(assistantResponse);
 
             const response = await this.aiGuard.models.generateContent({
-                model: "gemini-3.1-flash-lite",
+                model: "gemini-3.5-flash-lite",
                 contents: prompt,
             });
 
