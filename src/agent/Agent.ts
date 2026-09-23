@@ -92,6 +92,7 @@ If there are any issues (e.g., redundant tools, hallucinated parameters, or a be
 Reply with JSON: { "isGood": boolean, "feedback": string }
 `;
 
+        
         const reflectionResponse = await this.llm.generate([...this.messages, { role: "assistant", content: response.text || "" }, { role: "user", content: reflectionPrompt }], [], this.getSystemPrompt(), MEMORY_SEARCH_RULES_PROMPT);
 
         try {
@@ -132,11 +133,6 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
 
                 stepCount++;
                 const response = await this.llm.generate(this.messages, tools, systemPrompt);
-
-                if (response.error) {
-                    this.messages.push({ role: "assistant", content: response.text });
-                    return response;
-                }
 
                 if (!response.toolcalls || response.toolcalls.length === 0) {
                     this.messages.push({ role: "assistant", content: response.text });
@@ -248,4 +244,3 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
         }
     }
 }
-

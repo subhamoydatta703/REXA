@@ -26,7 +26,8 @@ export async function postCliMemory(
     }
 
     try {
-        const response = await fetch(REXA_MEMORY_URL, {
+        const memoryUrl = process.env.REXA_MEMORY_URL?.trim() || REXA_MEMORY_URL;
+        const response = await fetch(memoryUrl, {
             method: "POST",
             headers: {
                 Authorization: `Bearer ${token}`,
@@ -110,7 +111,8 @@ export async function postCliSearchMemory( query: string,
     }
 
     try {
-        const response = await fetch(REXA_MEMORY_SEARCH_URL, {
+        const memorySearchUrl = process.env.REXA_MEMORY_SEARCH_URL?.trim() || REXA_MEMORY_SEARCH_URL;
+        const response = await fetch(memorySearchUrl, {
             method: "POST",
             headers: {
                 Authorization: `Bearer ${token}`,
