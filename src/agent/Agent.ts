@@ -8,6 +8,7 @@ import { InputGuardrails } from "../guardrails/input/InputGuardrails";
 import { OutputGuardrails } from "../guardrails/output/OutputGuardrails";
 import { logger } from "../logger/AgentLogger";
 import { sandboxManager } from "../tools/ExecutionManager";
+import { MEMORY_SEARCH_RULES_PROMPT } from "../tools/MemorySearchRules";
 
 export class Agent {
     private llm: LLMProvider;
@@ -91,7 +92,7 @@ If there are any issues (e.g., redundant tools, hallucinated parameters, or a be
 Reply with JSON: { "isGood": boolean, "feedback": string }
 `;
 
-        const reflectionResponse = await this.llm.generate([...this.messages, { role: "assistant", content: response.text || "" }, { role: "user", content: reflectionPrompt }], [], this.getSystemPrompt());
+        const reflectionResponse = await this.llm.generate([...this.messages, { role: "assistant", content: response.text || "" }, { role: "user", content: reflectionPrompt }], [], this.getSystemPrompt(), MEMORY_SEARCH_RULES_PROMPT);
 
         try {
             const result = JSON.parse(reflectionResponse.text);
