@@ -68,8 +68,6 @@ export class GeminiProvider implements LLMProvider {
                 .join("");
 
 
-console.log("Extracted text in gemini provider",extractedText);
-
             return {
                 role: "assistant",
                 text: extractedText,
@@ -82,22 +80,10 @@ console.log("Extracted text in gemini provider",extractedText);
             };
 
         } catch (error) {
-
-            console.error("LLM generation failed:", error);
-
-            return {
-                role: "assistant",
-                text: "",
-                rawParts: [],
-                toolcalls: [],
-                error: {
-                    type: "LLM_GENERATION_FAILED",
-                    message:
-                        error instanceof Error
-                            ? error.message
-                            : String(error)
-                }
-            };
+            // Do not turn a provider failure into an empty assistant response.
+            // The CLI receives the original status/code and selects a message
+            // appropriate for the user.
+            throw error;
         }
     }
 

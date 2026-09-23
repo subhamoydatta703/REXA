@@ -45,13 +45,8 @@ export async function* streamGemini(
             },
         });
     } catch (error) {
-        console.error("Error generating content stream:", error);
-
-        throw new Error(
-            `Failed to stream from Gemini: ${
-                error instanceof Error ? error.message : String(error)
-            }`
-        );
+        // Keep provider status/code available to the caller.
+        throw error;
     }
 
     for await (const chunk of stream) {
