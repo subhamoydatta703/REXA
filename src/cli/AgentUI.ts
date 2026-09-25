@@ -17,6 +17,73 @@ export class AgentUI {
     
     private static accentTheme = gradient(["#ffff09ff","#ffff09ff"]);
 
+    private static readonly ansiPattern = /\x1b\[[0-9;]*m/g;
+    // Number of terminal rows between the banner's mode row and the prompt.
+    // It changes only when the workspace warning is displayed.
+    private static headerToPromptRows = 6;
+
+    private static visibleLength(value: string): number {
+        return value.replace(this.ansiPattern, "").length;
+    }
+
+    private static truncateToWidth(value: string, width: number): string {
+        if (width <= 0) return "";
+        if (value.length <= width) return value;
+        return width === 1 ? "…" : `…${value.slice(-(width - 1))}`;
+    }
+
+    private static displayHeader(mode: AgentMode = "act"): void {
+        const label = "REXA CLI";
+        const version = "v1.1.0";
+        const tag = "Autonomous Agent Harness";
+        const toggle = "[PLAN] ↹ ACT  · Tab switches";
+        const content = `${label}  ${version}  |  ${tag}  |  ${toggle}`;
+        const width = content.length + 4;
+
+        const modeLabel = (target: AgentMode) => target === mode
+            ? chalk.cyan.bold(`[${target.toUpperCase()}]`)
+            : target.toUpperCase();
+        const headerLine =
+            chalk.gray("|  ") +
+            chalk.bold.white(label) +
+            chalk.gray(`  ${version}  |  `) +
+            chalk.bold.yellow(tag) +
+            chalk.gray("  |  ") +
+            modeLabel("plan") +
+            chalk.gray(" ↹ ") +
+            modeLabel("act") +
+            chalk.gray("  · Tab switches  |");
+
+        console.log(chalk.gray(`+${"-".repeat(width)}+`));
+        console.log(headerLine);
+        console.log(chalk.gray(`+${"-".repeat(width)}+`));
+    }
+
+    private static updateHeaderMode(mode: AgentMode): void {
+        const label = "REXA CLI";
+        const version = "v1.1.0";
+        const tag = "Autonomous Agent Harness";
+        const modeLabel = (target: AgentMode) => target === mode
+            ? chalk.cyan.bold(`[${target.toUpperCase()}]`)
+            : target.toUpperCase();
+        const headerLine =
+            chalk.gray("|  ") +
+            chalk.bold.white(label) +
+            chalk.gray(`  ${version}  |  `) +
+            chalk.bold.yellow(tag) +
+            chalk.gray("  |  ") +
+            modeLabel("plan") +
+            chalk.gray(" ↹ ") +
+            modeLabel("act") +
+            chalk.gray("  · Tab switches  |");
+
+        // Do not rely on ANSI cursor-save slots: Windows terminals may share
+        // them. Address the known header row relative to the input instead.
+        process.stdout.write(
+            `\x1b[${this.headerToPromptRows}A\r\x1b[2K${headerLine}\x1b[${this.headerToPromptRows}B\r`,
+        );
+    }
+
     private static getErrorMessage(error: unknown): string {
         const details = error && typeof error === "object" ? error as Record<string, unknown> : {};
         const nested = details.error && typeof details.error === "object"
@@ -57,36 +124,14 @@ export class AgentUI {
     }
 
     // Renders clear screen, monochrome ASCII logo, and pixel-perfect ANSI-safe box frame.
-    static displayBanner(): void {
+    static displayBanner(mode: AgentMode = "act"): void {
         console.clear();
         const asciiLogo = figlet.textSync("REXA", { font: "Standard" });
 
         // Print monochrome ASCII logo
         console.log(this.theme.multiline(asciiLogo));
+        this.displayHeader(mode);
 
-        // Plain text components for accurate visible length calculation (ignoring ANSI codes)
-        const label = "REXA CLI";
-        const version = "v1.1.0";
-        const tag = "Autonomous Agent Harness";
-
-        const plainText = `${label}  ${version}  │  ${tag}`;
-        const padding = 4;
-        const width = plainText.length + padding;
-
-        const top = chalk.gray("┌" + "─".repeat(width) + "┐");
-        const mid =
-            chalk.gray("│  ") +
-            chalk.bold.white(label) +
-            chalk.gray(`  ${version}  │  `) +
-            chalk.bold.yellow(tag) +
-            chalk.gray("  │");
-        const bot = chalk.gray("└" + "─".repeat(width) + "┘");
-
-        console.log(top);
-        console.log(mid);
-        console.log(bot);
-
-        
         console.log("");
         console.log(chalk.bold.yellow("  ❯ ") + chalk.gray("Yo, it's me... ") + chalk.bold.white("REXA") + chalk.gray(". What's the plan?"));
         console.log("");
@@ -97,6 +142,7 @@ export class AgentUI {
         const resolved = path.resolve(workspace);
         const home = path.resolve(os.homedir());
         const isBroadWorkspace = resolved === home || resolved === path.parse(resolved).root;
+        this.headerToPromptRows = isBroadWorkspace ? 7 : 6;
 
         // console.log(chalk.gray("  Workspace mounted read/write in sandbox: ") + chalk.white(resolved));
         if (isBroadWorkspace) {
@@ -124,10 +170,12 @@ export class AgentUI {
             let value = "";
 
             const render = () => {
-                const modeLabel = mode === "plan" ? chalk.white.bold("PLAN") : chalk.yellow.bold("ACT");
+                const prefix = ` ${chalk.cyan.bold("❯")} `;
+                const availableWidth = Math.max(1, (stdout.columns || 100) - this.visibleLength(prefix));
                 stdout.clearLine(0);
                 stdout.cursorTo(0);
-                stdout.write(` ${chalk.cyan.bold("❯")} ${value}${chalk.gray("  [")}${modeLabel}${chalk.gray(" · Tab switches]")}`);
+                // Keep the active mode visible without allowing long input to wrap.
+                stdout.write(`${prefix}${this.truncateToWidth(value, availableWidth)}`);
             };
 
             const cleanup = () => {
@@ -143,6 +191,7 @@ export class AgentUI {
                 }
                 if (key.name === "tab") {
                     mode = mode === "plan" ? "act" : "plan";
+                    this.updateHeaderMode(mode);
                     render();
                     return;
                 }
@@ -193,25 +242,19 @@ export class AgentUI {
         // Set up marked to render markdown for the terminal (marked-terminal v7+ API)
         marked.use(markedTerminal());
 
-        // Reserve space for the gutter prefix "  ▎ " (4 visible chars + 2 spaces = 6)
-        const gutterWidth = 6;
-        const termWidth = (process.stdout.columns || 100) - gutterWidth;
-
-        // Word-wrap a plain string to termWidth
-        const wrapLine = (str: string): string[] => {
-            const words = str.split(" ");
-            const wrapped: string[] = [];
-            let current = "";
-            for (const word of words) {
-                if ((current + (current ? " " : "") + word).length > termWidth) {
-                    if (current) wrapped.push(current);
-                    current = word;
-                } else {
-                    current = current ? `${current} ${word}` : word;
-                }
+        const gutter = "  ▎ ";
+        const displayWidth = Math.max(1, (process.stdout.columns || 100) - gutter.length);
+        const wrapPlainLine = (line: string): string[] => {
+            const chunks: string[] = [];
+            let remaining = line;
+            while (remaining.length > displayWidth) {
+                let breakAt = remaining.lastIndexOf(" ", displayWidth);
+                if (breakAt <= 0) breakAt = displayWidth;
+                chunks.push(remaining.slice(0, breakAt));
+                remaining = remaining.slice(breakAt).trimStart();
             }
-            if (current) wrapped.push(current);
-            return wrapped.length ? wrapped : [""];
+            chunks.push(remaining);
+            return chunks;
         };
 
         console.log("");
@@ -225,15 +268,11 @@ export class AgentUI {
         const rendered = (marked(cleaned) as string).trimEnd();
         const lines = rendered.split("\n");
         for (const line of lines) {
-            // Strip ANSI for length measurement, then wrap on visible length
-            const visibleLine = line.replace(/\x1b\[[0-9;]*m/g, "");
-            if (visibleLine.length <= termWidth) {
-                console.log(chalk.hex("#3B3B4F")("  ▎ ") + line);
-            } else {
-                const chunks = wrapLine(visibleLine);
-                for (const chunk of chunks) {
-                    console.log(chalk.hex("#3B3B4F")("  ▎ ") + chunk);
-                }
+            // marked-terminal embeds ANSI styling, which is not display width.
+            // Wrap the visible text so every response line aligns with the gutter.
+            const plainLine = line.replace(this.ansiPattern, "");
+            for (const chunk of wrapPlainLine(plainLine)) {
+                console.log(chalk.hex("#3B3B4F")(gutter) + chunk);
             }
         }
 
