@@ -7,3 +7,12 @@ export interface Message {
     content?: string;
     parts?: Part[];
 }
+
+
+export interface ResearchMessage {
+    agentName?: string;
+    runID?: string;
+    role: "user" | "model";
+    content?: string;
+    parts?: Part[];
+}

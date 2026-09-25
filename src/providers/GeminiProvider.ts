@@ -1,9 +1,20 @@
 import type { Message } from "../agent/Message";
 import type { LLMProvider } from "../providers/LLMProvider";
-import { FunctionCallingConfigMode, GoogleGenAI, type Part } from "@google/genai";
+
+import { ApiError, FunctionCallingConfigMode, GoogleGenAI, type Part } from "@google/genai";
 import type { LLMResponse } from "../providers/LLMResponse";
 import type { Tool } from "../tools/ToolRegistry";
 import * as z from "zod";
+import { logger } from "../logger/AgentLogger";
+
+interface GeminiErrorDetails {
+    "@type": string;
+    reason?: string;
+    domain?: string;
+    retryDelay?: string;
+    violations?: Array<any>;
+    links?: Array<{ description: string; url: string }>;
+}
 
 export class GeminiProvider implements LLMProvider {
     private client: GoogleGenAI;
@@ -35,6 +46,8 @@ export class GeminiProvider implements LLMProvider {
                 };
             });
 
+           
+
             const response = await this.client.models.generateContent({
                 model: "gemini-3.6-flash",
                 contents,
@@ -50,7 +63,16 @@ export class GeminiProvider implements LLMProvider {
                     } : {}),
                 },
                 
-            });
+            })
+
+
+            
+
+            
+                   
+
+            
+            
 
             const candidate = response.candidates?.[0];
             const functionCalls = response.functionCalls || [];
@@ -72,11 +94,43 @@ export class GeminiProvider implements LLMProvider {
                     .map(call => ({ name: call.name, params: (call.args as Record<string, unknown>) || {} }))
             };
 
-        } catch (error) {
-            // Do not turn a provider failure into an empty assistant response.
-            // The CLI receives the original status/code and selects a message
-            // appropriate for the user.
-            throw error;
+        } catch (error: any) {
+
+            
+
+    if (error instanceof ApiError) {
+        console.log("Gemini API Error");
+        console.log("name:", error.name);
+        console.log("status:", error.status);
+        console.log("message:", error.message);
+
+        if (error.status === 429) {
+            console.log("RATE LIMIT");
+        }
+
+        return {
+            role: "assistant",
+            text: "",
+            error: {
+                type: "LLM_GENERATION_FAILED",
+                message: error.message,
+            },
+        };
+    }
+
+    console.error("Unexpected error:", error);
+
+    return {
+        role: "assistant",
+        text: "",
+        error: {
+            type: "LLM_GENERATION_FAILED",
+            message: error instanceof Error
+                ? error.message
+                : String(error),
+        },
+    };
+            
         }
     }
 
