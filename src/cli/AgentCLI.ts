@@ -7,9 +7,9 @@ export class CLI {
     constructor(private agent: Agent) {}
 
     async start() {
-        AgentUI.displayBanner();
-        AgentUI.displayWorkspace(process.cwd());
         let mode: AgentMode = "act";
+        AgentUI.displayBanner(mode);
+        AgentUI.displayWorkspace(process.cwd());
 
         while (true) {
             let userInput: string;
