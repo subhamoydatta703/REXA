@@ -6,7 +6,16 @@ export interface LLMResponse {
     rawParts?: any[];
     toolcalls?: ToolCall[];
      error?: {
-        type: "LLM_GENERATION_FAILED";
+        type: string;
         message: string;
+    };
+}
+
+
+export interface GeminiRawJsonError {
+    error: {
+        code: number;
+        message: string;
+        status: string;
     };
 }
