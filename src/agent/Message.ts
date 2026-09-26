@@ -12,7 +12,7 @@ export interface Message {
 export interface ResearchMessage {
     agentName?: string;
     runID?: string;
-    role: "user" | "model";
+    role: "user" | "model" | "tool";
     content?: string;
     parts?: Part[];
 }
