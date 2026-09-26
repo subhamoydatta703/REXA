@@ -16,3 +16,7 @@ export interface ResearchMessage {
     content?: string;
     parts?: Part[];
 }
+
+
+
+
