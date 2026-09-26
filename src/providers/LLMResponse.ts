@@ -19,3 +19,11 @@ export interface GeminiRawJsonError {
         status: string;
     };
 }
+
+
+
+export interface SupervisorDecision {
+    route: "DIRECT" | "CODE_ONLY" | "RESEARCH_AND_CODE";
+    reason: string;
+    directResponse?: string;
+}
