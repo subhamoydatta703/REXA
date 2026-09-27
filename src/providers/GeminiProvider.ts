@@ -56,7 +56,7 @@ export class GeminiProvider implements LLMProvider {
            
 
             const stream = await this.client.models.generateContentStream({
-                model: "gemini-3.6-flash",
+                model: "gemini-3.8-flash",
                 contents,
                 config: {
                     systemInstruction: systemInstruction,
