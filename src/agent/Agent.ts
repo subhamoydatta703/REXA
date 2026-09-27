@@ -2,7 +2,6 @@ import { type Message } from "./Message";
 import { type LLMProvider } from "../providers/LLMProvider";
 import type { ToolRegistry } from "../tools/ToolRegistry";
 import { type ExecutionManager } from "../tools/ExecutionManager";
-import { streamGemini } from "../providers/GeminiStreaming";
 import { type GuardrailContext } from "../guardrails/types/GuardrailContext";
 import { InputGuardrails } from "../guardrails/input/InputGuardrails";
 import { OutputGuardrails } from "../guardrails/output/OutputGuardrails";
@@ -10,6 +9,8 @@ import { logger } from "../logger/AgentLogger";
 import { sandboxManager } from "../tools/ExecutionManager";
 import { MEMORY_SEARCH_RULES_PROMPT } from "../tools/MemorySearchRules";
 import type { AgentMode } from "./AgentMode";
+import type { RunCallbacks } from "./RunCallbacks";
+import type { LLMResponse } from "../providers/LLMResponse";
 
 export class Agent {
     private llm: LLMProvider;
@@ -117,7 +118,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
     }
 
 
-    async run(content: string, mode: AgentMode = "act") {
+    async run(content: string, mode: AgentMode = "act", callbacks?: RunCallbacks): Promise<LLMResponse> {
         const runID = crypto.randomUUID();
         logger.debug(`Agent run started`, { runID, agent: this.name });
         const context: GuardrailContext = {
@@ -143,11 +144,16 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
             let stepCount = 0;
 
             const systemPrompt = this.getSystemPrompt(mode);
+            const agentStatus = mode === "plan" ? "planning..." : "coding...";
+            callbacks?.onStatus?.(agentStatus);
 
             while (stepCount < this.maxSteps) {
 
                 stepCount++;
-                const response = await this.llm.generate(this.messages, tools, systemPrompt);
+                const response = await this.llm.generate(this.messages, tools, systemPrompt, undefined, callbacks);
+                if (response.error) {
+                    throw new Error(response.error.message);
+                }
 
                 if (!response.toolcalls || response.toolcalls.length === 0) {
                     this.messages.push({ role: "assistant", content: response.text });
@@ -156,7 +162,10 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                     if (finalResponse.isSafe) {
                         return response;
                     }
-                    return { reason: finalResponse.reason, text: finalResponse.text };
+                    return {
+                        role: "assistant",
+                        text: finalResponse.text || finalResponse.reason || "Response blocked by output validation.",
+                    };
                 }
 
                 // Reflect on plan
@@ -214,7 +223,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                         paramDetail = `[git ${args}]`.trim();
                     }
 
-                    logger.tool(toolCall.name, "running", paramDetail);
+                    callbacks?.onStatus?.(`[${toolCall.name}] running...${paramDetail ? ` ${paramDetail}` : ""}`);
                     const startTime = Date.now();
 
                     let result;
@@ -225,7 +234,8 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                     }
 
                     const duration = ((Date.now() - startTime) / 1000).toFixed(1) + "s";
-                    logger.tool(toolCall.name, "done", `(${duration})`);
+                    logger.debug(`Tool completed: ${toolCall.name}`, { duration });
+                    callbacks?.onStatus?.(agentStatus);
 
                     this.messages.push({
                         role: "tool",

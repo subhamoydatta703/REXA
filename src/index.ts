@@ -8,6 +8,10 @@ import { executeCommand } from "./tools/executeTools";
 import { getProjectTree } from "./tools/FileTools";
 import { gitCommand } from "./tools/GitTools";
 import { search } from "./tools/SearchTool";
+import { Orchestrator } from "./orchestration/Orchestrator";
+import { Supervisor } from "./orchestration/Supervisor";
+import { ResearchAgent } from "./agent/ResearchAgent";
+import { InputGuardrails } from "./guardrails/input/InputGuardrails";
 
 import { saveMemory, searchMemory } from "./tools/MemoryTools";
 import { ToolRegistry } from "./tools/ToolRegistry";
@@ -22,7 +26,7 @@ async function main() {
     program
         .name("rexa")
         .description("REXA AI Agent CLI")
-        .version("1.1.0")
+        .version("2.0.0")
         .option("-m, --max-steps <number>", "Max steps per task", "60")
         .option("-n, --name <string>", "Agent name", "REXA")
         .option("-k, --set-key [string]", "Set or update Gemini API key (masked input if omitted)")
@@ -152,7 +156,22 @@ async function main() {
             apiKey
         );
 
-        const cli = new CLI(agent);
+        const researchAgent = new ResearchAgent(
+            llm,
+            toolRegistry,
+            parseInt(options.maxSteps, 10),
+            "ResearchAgent",
+            undefined,
+            apiKey,
+        );
+        const orchestrator = new Orchestrator(
+            new Supervisor(apiKey),
+            researchAgent,
+            agent,
+            new InputGuardrails(apiKey),
+        );
+
+        const cli = new CLI(orchestrator);
         await cli.start();
     });
 

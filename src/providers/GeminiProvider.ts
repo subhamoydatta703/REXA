@@ -6,6 +6,7 @@ import type { LLMResponse } from "../providers/LLMResponse";
 import type { Tool } from "../tools/ToolRegistry";
 import * as z from "zod";
 import { logger } from "../logger/AgentLogger";
+import type { RunCallbacks } from "../agent/RunCallbacks";
 
 interface GeminiErrorDetails {
     "@type": string;
@@ -23,7 +24,13 @@ export class GeminiProvider implements LLMProvider {
         this.client = new GoogleGenAI({ apiKey: apikey });
     }
 
-    async generate(messages: Message[], tools: Tool[], systemInstruction?: string): Promise<LLMResponse> {
+    async generate(
+        messages: Message[],
+        tools: Tool[] = [],
+        systemInstruction?: string,
+        _memorySearchInstruction?: string,
+        callbacks?: Pick<RunCallbacks, "onToken">,
+    ): Promise<LLMResponse> {
 
         try {
             const functionDeclarations = tools.map(tool => ({
@@ -48,7 +55,7 @@ export class GeminiProvider implements LLMProvider {
 
            
 
-            const response = await this.client.models.generateContent({
+            const stream = await this.client.models.generateContentStream({
                 model: "gemini-3.6-flash",
                 contents,
                 config: {
@@ -63,35 +70,44 @@ export class GeminiProvider implements LLMProvider {
                     } : {}),
                 },
                 
-            })
+            });
 
+            const parts: Part[] = [];
+            const functionCalls: NonNullable<LLMResponse["toolcalls"]> = [];
+            let extractedText = "";
+            let hasFunctionCalls = false;
 
-            
+            for await (const chunk of stream) {
+                const chunkParts = chunk.candidates?.[0]?.content?.parts ?? [];
+                parts.push(...chunkParts);
 
-            
-                   
+                const chunkCalls = chunk.functionCalls ?? [];
+                if (chunkCalls.length > 0) {
+                    hasFunctionCalls = true;
+                    functionCalls.push(...chunkCalls
+                        .filter((call): call is typeof call & { name: string } => Boolean(call.name))
+                        .map(call => ({ name: call.name, params: (call.args as Record<string, unknown>) || {} })));
+                }
 
-            
-            
+                const chunkText = chunk.text ?? "";
+                extractedText += chunkText;
+                const chunkHasFunctionCall = chunkCalls.length > 0 || chunkParts.some(
+                    (part) => "functionCall" in part && Boolean(part.functionCall),
+                );
 
-            const candidate = response.candidates?.[0];
-            const functionCalls = response.functionCalls || [];
-            const parts = candidate?.content?.parts ?? [];
-            const extractedText = parts
-                .filter((p): p is Part & { text: string } => typeof (p as any).text === "string")
-                .map(p => p.text)
-                .join("");
+                // Tool turns are never user-facing. Stream only textual chunks
+                // that belong to a response chunk without a function call.
+                if (chunkText && !chunkHasFunctionCall) {
+                    callbacks?.onToken?.(chunkText);
+                }
+            }
 
 
             return {
                 role: "assistant",
                 text: extractedText,
                 rawParts: parts,
-                toolcalls: functionCalls
-                    .filter(
-                        (call): call is typeof call & { name: string } => Boolean(call.name)
-                    )
-                    .map(call => ({ name: call.name, params: (call.args as Record<string, unknown>) || {} }))
+                toolcalls: functionCalls,
             };
 
         } catch (error: any) {
@@ -117,8 +133,6 @@ export class GeminiProvider implements LLMProvider {
             },
         };
     }
-
-    console.error("Unexpected error:", error);
 
     return {
         role: "assistant",

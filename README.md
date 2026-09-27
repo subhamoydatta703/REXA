@@ -46,7 +46,7 @@ $ bun run rexa
 |_| \_\_____/_/\_\/_/   \_\
 
 +-----------------------------------------------+
-|  REXA CLI  v1.1.0 |  Autonomous Agent Harness  |
+|  REXA CLI  v2.0.0 |  Autonomous Agent Harness  |
 +-----------------------------------------------+
 
   > Yo, it's me... REXA. What's the plan?

@@ -5,7 +5,7 @@ import gradient from "gradient-string";
 import ora, { type Ora } from "ora";
 import os from "node:os";
 import path from "node:path";
-import { setActiveSpinner } from "./TerminalState";
+import { clearActiveSpinner, setActiveSpinner } from "./TerminalState";
 import { marked } from "marked";
 import { markedTerminal } from "marked-terminal";
 import * as readline from "node:readline";
@@ -16,14 +16,17 @@ export class AgentUI {
     private static theme = gradient(["#f9f908", "#A1A1AA", "#52525B"]);
     
     private static accentTheme = gradient(["#ffff09ff","#ffff09ff"]);
+    private static readonly version = "v2.0.0";
 
     private static readonly ansiPattern = /\x1b\[[0-9;]*m/g;
+    private static markdownConfigured = false;
+    private static streamingBuffer = "";
     // Number of terminal rows between the banner's mode row and the prompt.
     // It changes only when the workspace warning is displayed.
     private static headerToPromptRows = 6;
 
     private static visibleLength(value: string): number {
-        return value.replace(this.ansiPattern, "").length;
+        return Array.from(value.replace(this.ansiPattern, "")).length;
     }
 
     private static truncateToWidth(value: string, width: number): string {
@@ -32,9 +35,86 @@ export class AgentUI {
         return width === 1 ? "…" : `…${value.slice(-(width - 1))}`;
     }
 
+    private static splitIntoDisplayLines(value: string, width: number): string[] {
+        const safeWidth = Math.max(1, width);
+        const lines: string[] = [];
+
+        for (const sourceLine of value.split("\n")) {
+            const characters = Array.from(sourceLine);
+            if (characters.length === 0) {
+                lines.push("");
+                continue;
+            }
+            for (let index = 0; index < characters.length; index += safeWidth) {
+                lines.push(characters.slice(index, index + safeWidth).join(""));
+            }
+        }
+
+        return lines.length > 0 ? lines : [""];
+    }
+
+    private static configureMarkdown(): void {
+        if (this.markdownConfigured) return;
+        marked.use(markedTerminal({ showSectionPrefix: false }));
+        this.markdownConfigured = true;
+    }
+
+    /** Wrap styled output without deleting its ANSI SGR sequences. */
+    private static wrapStyledLine(line: string, width: number): string[] {
+        if (!line || width <= 0) return [line];
+
+        const chunks: string[] = [];
+        let chunk = "";
+        let visible = 0;
+        let styleHistory = "";
+        const tokens = line.split(/(\x1b\[[0-9;]*m)/g).filter(Boolean);
+
+        const pushChunk = () => {
+            chunks.push(`${chunk}\x1b[0m`);
+            chunk = styleHistory;
+            visible = 0;
+        };
+
+        for (const token of tokens) {
+            if (this.ansiPattern.test(token)) {
+                this.ansiPattern.lastIndex = 0;
+                chunk += token;
+                styleHistory += token;
+                continue;
+            }
+            for (const character of Array.from(token)) {
+                if (visible >= width) pushChunk();
+                chunk += character;
+                visible++;
+            }
+        }
+
+        chunks.push(`${chunk}\x1b[0m`);
+        return chunks;
+    }
+
+    private static printResponseHeader(): void {
+        console.log("");
+        const now = new Date();
+        const time = chalk.gray(`${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`);
+        console.log("  " + this.accentTheme("rexa") + chalk.gray(" · ") + time);
+        console.log("");
+    }
+
+    private static printMarkdownLine(line: string): void {
+        const gutter = "  ▎ ";
+        const displayWidth = Math.max(1, (process.stdout.columns || 100) - this.visibleLength(gutter));
+        const rendered = (marked(line) as string).trimEnd();
+        for (const renderedLine of rendered.split("\n")) {
+            for (const chunk of this.wrapStyledLine(renderedLine, displayWidth)) {
+                console.log(chalk.hex("#3B3B4F")(gutter) + chunk);
+            }
+        }
+    }
+
     private static displayHeader(mode: AgentMode = "act"): void {
         const label = "REXA CLI";
-        const version = "v1.1.0";
+        const version = this.version;
         const tag = "Autonomous Agent Harness";
         const toggle = "[PLAN] ↹ ACT  · Tab switches";
         const content = `${label}  ${version}  |  ${tag}  |  ${toggle}`;
@@ -44,7 +124,7 @@ export class AgentUI {
             ? chalk.cyan.bold(`[${target.toUpperCase()}]`)
             : target.toUpperCase();
         const headerLine =
-            chalk.gray("|  ") +
+            chalk.gray("│  ") +
             chalk.bold.white(label) +
             chalk.gray(`  ${version}  |  `) +
             chalk.bold.yellow(tag) +
@@ -52,22 +132,22 @@ export class AgentUI {
             modeLabel("plan") +
             chalk.gray(" ↹ ") +
             modeLabel("act") +
-            chalk.gray("  · Tab switches  |");
+            chalk.gray("  · Tab switches  │");
 
-        console.log(chalk.gray(`+${"-".repeat(width)}+`));
+        console.log(chalk.gray(`╭${"─".repeat(width)}╮`));
         console.log(headerLine);
-        console.log(chalk.gray(`+${"-".repeat(width)}+`));
+        console.log(chalk.gray(`╰${"─".repeat(width)}╯`));
     }
 
-    private static updateHeaderMode(mode: AgentMode): void {
+    private static updateHeaderMode(mode: AgentMode, composerContentRows: number = 0): void {
         const label = "REXA CLI";
-        const version = "v1.1.0";
+        const version = this.version;
         const tag = "Autonomous Agent Harness";
         const modeLabel = (target: AgentMode) => target === mode
             ? chalk.cyan.bold(`[${target.toUpperCase()}]`)
             : target.toUpperCase();
         const headerLine =
-            chalk.gray("|  ") +
+            chalk.gray("│  ") +
             chalk.bold.white(label) +
             chalk.gray(`  ${version}  |  `) +
             chalk.bold.yellow(tag) +
@@ -75,12 +155,13 @@ export class AgentUI {
             modeLabel("plan") +
             chalk.gray(" ↹ ") +
             modeLabel("act") +
-            chalk.gray("  · Tab switches  |");
+            chalk.gray("  · Tab switches  │");
 
         // Do not rely on ANSI cursor-save slots: Windows terminals may share
         // them. Address the known header row relative to the input instead.
+        const rowsToHeader = this.headerToPromptRows + composerContentRows;
         process.stdout.write(
-            `\x1b[${this.headerToPromptRows}A\r\x1b[2K${headerLine}\x1b[${this.headerToPromptRows}B\r`,
+            `\x1b[${rowsToHeader}A\r\x1b[2K${headerLine}\x1b[${rowsToHeader}B\r`,
         );
     }
 
@@ -123,13 +204,21 @@ export class AgentUI {
         return "Ran into a bump while processing that. Lemme know if you want me to try again.";
     }
 
-    // Renders clear screen, monochrome ASCII logo, and pixel-perfect ANSI-safe box frame.
+    // Renders clear screen, framed ASCII logo, and the CLI status strip.
     static displayBanner(mode: AgentMode = "act"): void {
         console.clear();
-        const asciiLogo = figlet.textSync("REXA", { font: "Standard" });
+        const asciiLogo = figlet.textSync("REXA", { font: "ANSI Regular" }).trimEnd();
+        const logoLines = asciiLogo.split("\n");
+        const logoWidth = Math.max(...logoLines.map((line) => line.length));
+        const logoBorder = "─".repeat(logoWidth + 4);
 
-        // Print monochrome ASCII logo
-        console.log(this.theme.multiline(asciiLogo));
+        // The wordmark gets its own frame so the heavier glyphs read clearly
+        // at a glance while retaining the existing yellow-to-gray gradient.
+        console.log(this.theme(`╭${logoBorder}╮`));
+        for (const line of logoLines) {
+            console.log(this.theme(`│  ${line.padEnd(logoWidth)}  │`));
+        }
+        console.log(this.theme(`╰${logoBorder}╯`));
         this.displayHeader(mode);
 
         console.log("");
@@ -168,14 +257,64 @@ export class AgentUI {
             const wasRaw = stdin.isRaw;
             let mode = initialMode;
             let value = "";
+            let previousContentRows = 0;
+
+            const composer = () => {
+                const terminalWidth = stdout.columns || 100;
+                // No leading indent: this outer edge intentionally aligns with
+                // the logo frame and the status strip above it.
+                const innerWidth = Math.max(32, terminalWidth - 4);
+                const textWidth = Math.max(1, innerWidth - 3);
+                const contentLines = this.splitIntoDisplayLines(value, textWidth);
+                const hint = innerWidth >= 52
+                    ? " Enter send "
+                    : " Enter send ";
+                const availableBorder = Math.max(0, innerWidth - hint.length);
+                const leftBorder = Math.floor(availableBorder / 2);
+                const rightBorder = availableBorder - leftBorder;
+                const top =
+                    chalk.cyan("╭") +
+                    chalk.cyan("─".repeat(leftBorder)) +
+                    chalk.gray(hint) +
+                    chalk.cyan("─".repeat(rightBorder)) +
+                    chalk.cyan("╮");
+                const bottom = chalk.cyan(`╰${"─".repeat(innerWidth)}╯`);
+                const rows = contentLines.map((line, index) => {
+                    const prefix = index === 0
+                        ? chalk.cyan.bold(" ❯ ")
+                        : chalk.gray("   ");
+                    const padding = " ".repeat(Math.max(0, textWidth - this.visibleLength(line)));
+                    return chalk.gray("│") + prefix + line + padding + chalk.gray("│");
+                });
+
+                return { top, rows, bottom, contentRows: contentLines.length, currentLine: contentLines.at(-1) || "" };
+            };
+
+            const erasePreviousComposer = () => {
+                if (previousContentRows === 0) return;
+
+                // The cursor rests on the last content row. Move to the top,
+                // erase the old box, then return to its top-left corner.
+                stdout.write(`\x1b[${previousContentRows}A\r`);
+                const totalRows = previousContentRows + 2;
+                for (let index = 0; index < totalRows; index++) {
+                    stdout.write("\x1b[2K");
+                    if (index < totalRows - 1) stdout.write("\x1b[1B\r");
+                }
+                stdout.write(`\x1b[${totalRows - 1}A\r`);
+            };
 
             const render = () => {
-                const prefix = ` ${chalk.cyan.bold("❯")} `;
-                const availableWidth = Math.max(1, (stdout.columns || 100) - this.visibleLength(prefix));
-                stdout.clearLine(0);
-                stdout.cursorTo(0);
-                // Keep the active mode visible without allowing long input to wrap.
-                stdout.write(`${prefix}${this.truncateToWidth(value, availableWidth)}`);
+                const view = composer();
+                erasePreviousComposer();
+                stdout.write(`${view.top}\n${view.rows.join("\n")}\n${view.bottom}`);
+
+                // Return from the lower border to the final editable row and
+                // put the cursor immediately after the user's final character.
+                stdout.write("\x1b[1A\r");
+                const cursorColumn = 4 + this.visibleLength(view.currentLine);
+                stdout.write(`\x1b[${cursorColumn}C`);
+                previousContentRows = view.contentRows;
             };
 
             const cleanup = () => {
@@ -191,18 +330,28 @@ export class AgentUI {
                 }
                 if (key.name === "tab") {
                     mode = mode === "plan" ? "act" : "plan";
-                    this.updateHeaderMode(mode);
+                    this.updateHeaderMode(mode, previousContentRows);
                     render();
                     return;
                 }
+                const insertsNewLine =
+                    (key.name === "return" || key.name === "enter") && key.shift ||
+                    key.ctrl && key.name === "j";
+                if (insertsNewLine) {
+                        value += "\n";
+                        render();
+                        return;
+                }
                 if (key.name === "return" || key.name === "enter") {
                     cleanup();
-                    stdout.write("\n");
+                    // Leave the completed composer intact and start the agent
+                    // activity on a clean line directly beneath it.
+                    stdout.write("\x1b[1B\r\n");
                     resolve({ value, mode });
                     return;
                 }
                 if (key.name === "backspace") {
-                    value = value.slice(0, -1);
+                    value = Array.from(value).slice(0, -1).join("");
                     render();
                     return;
                 }
@@ -233,6 +382,40 @@ export class AgentUI {
     }
 
     
+    static updateSpinner(spinner: Ora, status: string): void {
+        if (!spinner.isSpinning) return;
+        const toolStatus = /^(\[[^\]]+\])(.*)$/.exec(status);
+        spinner.text = toolStatus
+            ? chalk.cyan(toolStatus[1] || "") + chalk.gray(toolStatus[2] || "")
+            : chalk.gray(status);
+    }
+
+    static beginStreamingResponse(spinner: Ora): void {
+        if (spinner.isSpinning) spinner.stop();
+        clearActiveSpinner(spinner);
+        this.configureMarkdown();
+        this.streamingBuffer = "";
+        this.printResponseHeader();
+    }
+
+    /** Render complete Markdown lines only, preventing raw syntax from flashing. */
+    static writeStreamingToken(token: string): void {
+        this.streamingBuffer += token;
+        let newlineIndex = this.streamingBuffer.indexOf("\n");
+        while (newlineIndex >= 0) {
+            const line = this.streamingBuffer.slice(0, newlineIndex).replace(/\r$/, "");
+            this.streamingBuffer = this.streamingBuffer.slice(newlineIndex + 1);
+            this.printMarkdownLine(line);
+            newlineIndex = this.streamingBuffer.indexOf("\n");
+        }
+    }
+
+    static finishStreamingResponse(): void {
+        if (this.streamingBuffer) this.printMarkdownLine(this.streamingBuffer);
+        this.streamingBuffer = "";
+        console.log("");
+    }
+
     //   Renders the agent's response 
     
     static renderResponse(text: string): void {
@@ -240,7 +423,7 @@ export class AgentUI {
         if (!cleaned) return;
 
         // Set up marked to render markdown for the terminal (marked-terminal v7+ API)
-        marked.use(markedTerminal());
+        this.configureMarkdown();
 
         const gutter = "  ▎ ";
         const displayWidth = Math.max(1, (process.stdout.columns || 100) - gutter.length);
@@ -268,10 +451,8 @@ export class AgentUI {
         const rendered = (marked(cleaned) as string).trimEnd();
         const lines = rendered.split("\n");
         for (const line of lines) {
-            // marked-terminal embeds ANSI styling, which is not display width.
-            // Wrap the visible text so every response line aligns with the gutter.
-            const plainLine = line.replace(this.ansiPattern, "");
-            for (const chunk of wrapPlainLine(plainLine)) {
+            // marked-terminal embeds ANSI styling; wrap while retaining it.
+            for (const chunk of this.wrapStyledLine(line, displayWidth)) {
                 console.log(chalk.hex("#3B3B4F")(gutter) + chunk);
             }
         }
