@@ -9,6 +9,7 @@ import { sandboxManager } from "../tools/ExecutionManager";
 import { ResearchAgentPrompt } from "./ReseatchAgentSystemPrompt";
 import type { LLMResponse } from "../providers/LLMResponse";
 import { type ResearchMessage } from "./Message";
+import type { RunCallbacks } from "./RunCallbacks";
 
 export class ResearchAgent {
 
@@ -33,7 +34,7 @@ export class ResearchAgent {
 
 
     private systemPrompt: string = ResearchAgentPrompt;
-    async execute(input: string) {
+    async execute(input: string, callbacks?: RunCallbacks): Promise<LLMResponse> {
         const runID = crypto.randomUUID();
         logger.debug(`Agent run started`, { runID, agent: this.name });
         const context: GuardrailContext = {
@@ -54,12 +55,18 @@ export class ResearchAgent {
             const searchTool = this.registry.getTool("search");
             const tools = searchTool ? [searchTool] : [];
             let stepCount = 0
+            callbacks?.onStatus?.("researching...");
 
 
             while (stepCount < this.maxSteps) {
                 stepCount++
 
+                // Research is an internal stage. It reports status only; its
+                // model output is supplied to the coding agent, never printed.
                 const response = await this.llm.generate(this.messages, tools, this.systemPrompt);
+                if (response.error) {
+                    throw new Error(response.error.message);
+                }
 
                 if (!response.toolcalls || response.toolcalls.length === 0) {
                     this.messages.push({ agentName: this.name, runID, role: "model", content: response.text });
@@ -68,7 +75,10 @@ export class ResearchAgent {
                     if (finalResponse.isSafe) {
                         return response;
                     }
-                    return { reason: finalResponse.reason, text: finalResponse.text };
+                    return {
+                        role: "assistant",
+                        text: finalResponse.text || finalResponse.reason || "Research output blocked by validation.",
+                    };
                 }
                 this.messages.push({
                     agentName: this.name,
@@ -95,7 +105,7 @@ export class ResearchAgent {
                     }
 
                     const params = (toolCall.params || {}) as Record<string, any>;
-                    logger.tool(toolCall.name, "running", `[query: "${params.query || ""}"]`);
+                    callbacks?.onStatus?.(`[${toolCall.name}] running... [query: "${params.query || ""}"]`);
                     const startTime = Date.now();
 
                     let result;
@@ -106,7 +116,8 @@ export class ResearchAgent {
                     }
 
                     const duration = ((Date.now() - startTime) / 1000).toFixed(1) + "s";
-                    logger.tool(toolCall.name, "done", `(${duration})`);
+                    logger.debug(`Research tool completed: ${toolCall.name}`, { duration });
+                    callbacks?.onStatus?.("researching...");
 
                     this.messages.push({
                         agentName: this.name,

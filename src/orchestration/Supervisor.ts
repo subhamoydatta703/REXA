@@ -20,7 +20,7 @@ export class Supervisor{
             const prompt = `${SupervisorPrompt}\n\n User Input: \n\n ${query}`
             
             const response = await this.client.models.generateContent({
-                model: "gemini-3.6-flash",
+                model: "gemini-3.5-flash",
                 contents: prompt,
                 config: {
                     responseMimeType: "application/json",
