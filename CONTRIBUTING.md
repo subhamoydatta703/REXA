@@ -1,62 +1,145 @@
 # Contributing to REXA
 
-Thanks for taking the time to contribute! REXA is a single-developer, experimental harness, so every bit of help counts — issues, docs, tests, and code are all welcome.
+Thank you for your interest in contributing to REXA. REXA is an autonomous agent harness combining multi-agent orchestration, web research, verified code editing, Docker sandboxing, and dual-layer safety guardrails.
+
+Contributions of all kinds are welcome: feature implementations, performance optimizations, documentation improvements, security enhancements, and bug fixes.
+
+---
 
 ## Code of Conduct
 
-This project is governed by the [Code of Conduct](./CODE_OF_CONDUCT.md). By participating, you agree to follow it.
+All contributors and participants agree to abide by the [Code of Conduct](./CODE_OF_CONDUCT.md). Please maintain a welcoming, respectful, and collaborative environment across issues, discussions, and pull requests.
+
+---
 
 ## Getting started
 
-Prerequisites:
+### Prerequisites
+- [Bun](https://bun.sh) version 1.1 or higher
+- [Node.js](https://nodejs.org/) version 18 or higher
+- [Docker Desktop](https://www.docker.com/) for sandboxed command execution
+- A Google Gemini API key for running live agent sessions
 
-- [Bun](https://bun.sh) 1.1+
-- [Docker](https://www.docker.com/get-started) for the sandbox
-- A Gemini API key only if you run a live agent session
+### Local development setup
 
-Setup:
+1. Fork and clone the repository:
+   ```bash
+   git clone https://github.com/subhamoydatta703/REXA.git
+   cd REXA
+   ```
+
+2. Install dependencies:
+   ```bash
+   bun install
+   ```
+
+3. Verify TypeScript compilation:
+   ```bash
+   bun run typecheck
+   ```
+
+4. Launch the development CLI:
+   ```bash
+   bun run rexa
+   ```
+
+---
+
+## Architecture overview for contributors
+
+Before submitting pull requests, familiarize yourself with REXA's core subsystems:
+
+- **Orchestration layer (`src/orchestration/`)**:
+  - `Orchestrator.ts`: Manages input validation, status updates, and execution dispatching.
+  - `Supervisor.ts` & `SupervisorPrompt.ts`: Classifies user requests into `DIRECT`, `CODE_ONLY`, or `RESEARCH_AND_CODE` routing paths.
+- **Agent layer (`src/agent/`)**:
+  - `ResearchAgent.ts`: Strictly read-only, external researcher providing structured briefs using the `search` tool.
+  - `Agent.ts`: Core coding agent executing up to 60-step task loops with autonomous tool plan reflection before execution.
+  - `AgentMode.ts`: Manages `plan` (read-only, design-focused) and `act` (autonomous tool execution) modes.
+- **Tooling suite (`src/tools/`)**:
+  - `ToolRegistry.ts`: Enforces Zod parameter schemas for all 8 registered tools.
+  - `CodingTools.ts` & `FileTools.ts`: Provides verified atomic file modifications and directory traversal.
+  - `executeTools.ts` & `CommandPolicy.ts`: Manages Docker container commands, command whitelists, and confirmation policies.
+  - `SearchTool.ts`: Implements the 4-tier search engine (Tavily, GitHub API, DuckDuckGo, direct HTTP) with SSRF defenses.
+  - `MemoryTools.ts`: Handles authenticated cloud memory storage and semantic recall.
+- **Guardrails & safety (`src/guardrails/`)**:
+  - `InputGuardrails.ts`: Detects prompt injections, jailbreaks, and malicious directives.
+  - `OutputGuardrails.ts`: Prevents credential leaks and unauthorized system prompt disclosures.
+  - `SecretScanner.ts`: Uses regex detection and Shannon entropy calculations (threshold 4.5) to redact secrets.
+- **Terminal UI (`src/cli/`)**:
+  - `AgentCLI.ts` & `AgentUI.ts`: Manages raw terminal input, multi-line composing, mode switching (`Tab`), streaming markdown, and error translation.
+
+---
+
+## Contribution standards
+
+### Strict TypeScript compliance
+The project enforces strict TypeScript checking. All changes must pass type checking cleanly without introducing any `any` casts or unhandled nullability:
 
 ```bash
-git clone https://github.com/subhamoydatta703/REXA.git
-cd REXA
-bun install
-bun x tsc --noEmit -p tsconfig.json
+bun run typecheck
 ```
 
-## Finding something to work on
+### Zero-emoji policy
+To ensure clean terminal presentation and compatibility across diverse terminal emulators, do not include emojis in CLI output messages, spinner statuses, system prompts, error strings, or core documentation.
 
-- Browse [open issues](https://github.com/subhamoydatta703/REXA/issues).
-- Labels like `good first issue` are beginner-friendly — feel free to add them to your issues.
-- Docs, tests, and example prompts are just as valuable as new features.
+### Security and credential handling
+- Never log, store, or output plaintext API keys, tokens, or passwords.
+- Always utilize `SecretScanner.redact()` when emitting log lines or tool outputs containing arbitrary string content.
+- Never weaken Docker container constraints (`cap_drop: [ALL]`, non-root user `1000:1000`, memory and CPU limits).
 
-## Making changes
+### Docker sandbox verification
+When modifying execution tooling (`src/tools/executeTools.ts`, `ExecutionManager.ts`, or `docker-compose.yaml`), verify that:
+1. Commands run inside the non-root sandbox container.
+2. Cloned repositories stay isolated in `/workspace`.
+3. Workstation project directories remain confined to `/app`.
 
-1. Create a branch: `git checkout -b feat/your-change`
-2. Make focused changes with clear conventional-commit messages, e.g. `fix: ...`, `feat: ...`, `docs: ...`, `refactor: ...`.
-3. Run the type checker: `bun x tsc --noEmit -p tsconfig.json`
-4. Smoke-test the CLI: `bun run src/index.ts --help`
-5. Open a pull request using the [PR template](./.github/PULL_REQUEST_TEMPLATE.md).
+---
 
-## Security issues
+## Making changes and pull requests
 
-REXA has a deliberate security model (guardrails, secret scanning, Docker sandboxing, git approval). If you believe you found a security bypass — a credential leak, a guardrail escape, or a sandbox escape — **do not paste secrets or exploit details in a public issue**. Open an issue marked `security` with minimal information, or email the maintainer privately via their GitHub profile.
+1. **Create a topic branch**:
+   ```bash
+   git checkout -b feat/your-feature-name
+   ```
 
-## Commit style
+2. **Follow Conventional Commits**:
+   Commit messages should adhere to the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+   - `feat: <summary>` for new features
+   - `fix: <summary>` for bug fixes
+   - `docs: <summary>` for documentation updates
+   - `refactor: <summary>` for non-breaking architectural improvements
+   - `test: <summary>` for test additions or fixtures
+   - `chore: <summary>` for build system or dependency updates
 
-The project uses [Conventional Commits](https://www.conventionalcommits.org/):
+3. **Verify locally**:
+   Ensure all checks pass before pushing:
+   ```bash
+   bun run typecheck
+   bun run src/index.ts --help
+   ```
 
-```text
-feat: <summary>
-fix: <summary>
-chore: <summary>
-docs: <summary>
-refactor: <summary>
-test: <summary>
-ci: <summary>
-```
+4. **Submit a Pull Request**:
+   - Provide a clear description of the problem solved and the implementation approach.
+   - Reference any related issues or discussions.
+   - Ensure the CI workflow passes on GitHub.
 
-## Questions
+---
 
-Open an issue and search for duplicates before posting. Please mention which OS, Bun version, and REXA version you are using.
+## Security vulnerability disclosures
 
-Thank you for helping make REXA safer, faster, and more useful!
+If you discover a security vulnerability — such as a credential leak, a sandbox escape, a guardrail bypass, or an arbitrary command execution flaw:
+
+- **Do not post vulnerabilities in public GitHub issues or discussions.**
+- Please report the issue privately through GitHub Security Advisories or contact the maintainer directly via their GitHub profile.
+- Include reproduction steps and environment details to assist in rapid triage and patching.
+
+---
+
+## Questions and support
+
+For questions, feature proposals, or general feedback:
+- Search existing [GitHub Issues](https://github.com/subhamoydatta703/REXA/issues) to avoid duplicates.
+- Open an issue detailing your operating system, Bun version, and REXA version.
+
+Thank you for contributing to REXA.

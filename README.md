@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="./assets/rexa.png" alt="REXA CLI Interface" width="800">
+  <img src="https://raw.githubusercontent.com/subhamoydatta703/REXA/main/assets/rexa.png" alt="REXA CLI Interface" width="800">
 </p>
 
 > [!WARNING]

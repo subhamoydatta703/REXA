@@ -1,7 +1,7 @@
 {
   "name": "rexa-agent",
   "version": "2.0.0",
-  "description": "REXA — a general-purpose, single-agent development harness that understands tasks, gathers context, plans solutions, writes code, runs checks, and reports results through one continuous conversation.",
+  "description": "Autonomous terminal agent harness engineered to understand software tasks, conduct web research, reflect on tool plans, safely modify codebases with automated verification, execute commands in Docker, enforce safety guardrails with secret scanning, and retain user preferences.",
   "main": "src/index.ts",
   "module": "src/index.ts",
   "type": "module",
@@ -24,8 +24,14 @@
     "gemini",
     "autonomous-coding",
     "agent-harness",
+    "multi-agent",
+    "orchestrator",
+    "research-agent",
+    "coding-agent",
     "guardrails",
+    "secret-scanning",
     "sandboxing",
+    "docker",
     "bun",
     "developer-tools",
     "rexa"
