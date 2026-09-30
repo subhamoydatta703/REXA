@@ -9,6 +9,35 @@ import { sandboxManager } from "./ExecutionManager";
 
 const PROJECT_ROOT = path.resolve(process.cwd());
 
+const EXCLUDE_DIRS = new Set([
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    ".next",
+    "coverage",
+    ".cache",
+    ".turbo",
+    ".venv",
+    "venv",
+    "__pycache__",
+]);
+
+interface CacheEntry<T> {
+    data: T;
+    timestamp: number;
+}
+
+const FILE_CACHE_TTL_MS = 15_000;
+const filePathCache = new Map<string, CacheEntry<string[]>>();
+let allFilesCache: CacheEntry<{ total: number; files: string[]; truncated: boolean }> | null = null;
+
+/** Invalidate all in-memory file discovery and project tree caches. */
+export function invalidateFileCache(): void {
+    filePathCache.clear();
+    allFilesCache = null;
+}
+
 /** Resolve a tool path inside the project, including when an existing symlink is used. */
 async function resolveProjectPath(userPath: string): Promise<string> {
     const candidate = path.resolve(PROJECT_ROOT, userPath);
@@ -518,6 +547,7 @@ export const createFile: Tool = {
             createFileSchema.parse(args);
 
         await write(await resolveProjectPath(parsed.path), parsed.text);
+        invalidateFileCache();
 
         return {
             output: "File created successfully"
@@ -588,6 +618,7 @@ export const createAndExecuteFile: Tool = {
         }
 
         await write(projectPath, parsed.code);
+        invalidateFileCache();
 
         try {
             const result = await sandboxManager.execute({
@@ -655,6 +686,7 @@ export const appendFileTool: Tool = {
             parsed.text;
 
         await Bun.write(projectPath, updatedContent);
+        invalidateFileCache();
 
         return {
             success: true,
@@ -780,6 +812,7 @@ export const editFile: Tool = {
         }
 
         await Bun.write(projectPath, updatedContent);
+        invalidateFileCache();
 
         return {
             success: true,
@@ -813,6 +846,7 @@ export const createAndWritePlan: Tool = {
             createAndWritePlanSchema.parse(args);
 
         await write(await resolveProjectPath(parsed.filePath), parsed.plan);
+        invalidateFileCache();
 
         return {
             output:
@@ -822,10 +856,15 @@ export const createAndWritePlan: Tool = {
 };
 
 
-// Recursively find every file path inside a directory.
+// Recursively find file paths inside a directory with exclusion filtering and TTL caching.
 async function getFilePaths(
     dir: string
 ): Promise<string[]> {
+    const cached = filePathCache.get(dir);
+    if (cached && Date.now() - cached.timestamp < FILE_CACHE_TTL_MS) {
+        return cached.data;
+    }
+
     const entries =
         await readdir(dir, {
             withFileTypes: true
@@ -834,6 +873,10 @@ async function getFilePaths(
     const paths: string[] = [];
 
     for (const entry of entries) {
+        if (EXCLUDE_DIRS.has(entry.name)) {
+            continue;
+        }
+
         const fullPath =
             path.join(
                 dir,
@@ -843,7 +886,6 @@ async function getFilePaths(
         if (entry.isFile()) {
             paths.push(fullPath);
         }
-        
 
         if (entry.isDirectory()) {
             const nestedPaths =
@@ -855,6 +897,7 @@ async function getFilePaths(
         }
     }
 
+    filePathCache.set(dir, { data: paths, timestamp: Date.now() });
     return paths;
 }
 
@@ -867,10 +910,10 @@ export const deleteFile: Tool = {
 
     description:
         "Delete a file from the filesystem. " +
-        "USE THIS when the agent needs to remove a file with user permission. " +
-        "Example: 'Delete src/utils/Math.ts'. " +
-        "DO NOT use this for normal source-code files; use create_file." +
-        "Do NOT delete files without explicit user permission or mention by the user.",
+        "USE THIS only when a file is explicitly supposed to be removed. " +
+        "Examples: 'Delete temp.txt', 'Remove the old config file'. " +
+        "DO NOT use this to clear a file's contents without deleting the file itself. " +
+        "DO NOT use this on non-existent files.",
 
     parameters: deleteFileSchema,
 
@@ -898,6 +941,7 @@ export const deleteFile: Tool = {
         const file = Bun.file(projectPath);
 
         await file.delete();
+        invalidateFileCache();
 
         return {
             output:
@@ -909,17 +953,36 @@ export const deleteFile: Tool = {
 
 
 export const getAllFiles = async () => {
+    if (allFilesCache && Date.now() - allFilesCache.timestamp < FILE_CACHE_TTL_MS) {
+        return allFilesCache.data;
+    }
+
     const allFiles = await Array.fromAsync(
         glob("**/*", {
-            exclude: ["node_modules/**", "dist/**", ".git/**", "build/**", ".next/**", "coverage/**", "*.log"],
+            exclude: [
+                "node_modules/**",
+                "dist/**",
+                ".git/**",
+                "build/**",
+                ".next/**",
+                "coverage/**",
+                "*.log",
+                ".turbo/**",
+                ".venv/**",
+                "venv/**",
+                "__pycache__/**",
+            ],
         })
     );
 
-    return {
+    const result = {
         total: allFiles.length,
         files: allFiles.slice(0, 300),
         truncated: allFiles.length > 300,
     };
+
+    allFilesCache = { data: result, timestamp: Date.now() };
+    return result;
 };
 
 
