@@ -2,6 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { SupervisorPrompt } from "./SupervisorPrompt";
 import type { SupervisorDecision } from "../providers/LLMResponse";
 import { logger } from "../logger/AgentLogger";
+import { isUrlInspectionRequest } from "./UrlIntent";
 
 
 
@@ -29,7 +30,7 @@ export class Supervisor{
                         properties: {
                             route: {
                                 type: "string",
-                                enum: ["DIRECT", "CODE_ONLY", "RESEARCH_AND_CODE"],
+                                enum: ["DIRECT", "CODE_ONLY", "RESEARCH_ONLY", "RESEARCH_AND_CODE"],
                             },
                             reason: {
                                 type: "string",
@@ -48,6 +49,7 @@ export class Supervisor{
             const responseText = response.text || ""
             const jsonString =  responseText.replace(/```json/g, "").replace(/```/g, "").trim();
             const parsed = JSON.parse(jsonString) as SupervisorDecision;
+            if (!["DIRECT", "CODE_ONLY", "RESEARCH_ONLY", "RESEARCH_AND_CODE"].includes(parsed.route)) throw new Error("Invalid supervisor route");
            return parsed;
             
             
@@ -56,7 +58,7 @@ export class Supervisor{
                 error: error instanceof Error ? error.message : String(error),
             });
             return {
-                route:"CODE_ONLY",
+                route: isUrlInspectionRequest(query) ? "RESEARCH_ONLY" : "CODE_ONLY",
                 reason:"Supervisor classification failed",
             }
         }

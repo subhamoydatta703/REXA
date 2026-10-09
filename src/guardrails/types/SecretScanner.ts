@@ -38,12 +38,27 @@ export class SecretScanner {
     }
 
     // Check individual words for high entropy (randomness)
-    const words = input.split(/[\s,;"']+/);
+    // A public URL's punctuation and path are not evidence of a credential.
+    // Inspect its credential-bearing components instead of scoring the whole URL.
+    let urlSecret = false;
+    const withoutUrls = input.replace(/https?:\/\/[^\s<>"']+/gi, raw => {
+      try {
+        const url = new URL(raw.replace(/[),.;\]}]+$/, ""));
+        if (url.username || url.password) urlSecret = true;
+        for (const [name, value] of [...url.searchParams, ...new URLSearchParams(url.hash.slice(1))]) {
+          if (value && (/^(?:api[_-]?key|key|token|access[_-]?token|auth[_-]?token|password|passwd|secret|signature|sig|x-amz-signature)$/i.test(name) ||
+              (value.length >= 16 && this.calculateEntropy(value) > entropyThreshold))) urlSecret = true;
+        }
+        return " ";
+      } catch { return raw; }
+    });
+    if (urlSecret) return true;
+    const words = withoutUrls.split(/[\s,;"']+/);
     for (const word of words) {
-      if (word.length >= 16) { 
+      if (word.length >= 16) {
         const entropy = this.calculateEntropy(word);
         if (entropy > entropyThreshold) {
-          return true; 
+          return true;
         }
       }
     }
@@ -53,7 +68,25 @@ export class SecretScanner {
 
   /** Redact detectable credentials before they reach terminal logs. */
   public static redact(input: string): string {
-    let redacted = input;
+    let redacted = input.replace(/https?:\/\/[^\s<>"']+/gi, raw => {
+      try {
+        const url = new URL(raw);
+        if (url.username || url.password) { url.username = "REDACTED"; url.password = ""; }
+        const fragment = new URLSearchParams(url.hash.slice(1));
+        let fragmentRedacted = false;
+        for (const [name, value] of fragment) {
+          if (value && /^(?:api[_-]?key|key|token|access[_-]?token|auth[_-]?token|password|passwd|secret|signature|sig)$/i.test(name)) {
+            fragment.set(name, "REDACTED"); fragmentRedacted = true;
+          }
+        }
+        if (fragmentRedacted) url.hash = fragment.toString();
+        for (const [name, value] of url.searchParams) {
+          if (value && (/^(?:api[_-]?key|key|token|access[_-]?token|auth[_-]?token|password|passwd|secret|signature|sig|x-amz-signature)$/i.test(name) ||
+              (value.length >= 16 && this.calculateEntropy(value) > 4.5))) url.searchParams.set(name, "REDACTED");
+        }
+        return url.href;
+      } catch { return raw; }
+    });
     for (const pattern of Object.values(this.SCAN_PATTERNS)) {
       pattern.lastIndex = 0;
       redacted = redacted.replace(pattern, "[REDACTED]");

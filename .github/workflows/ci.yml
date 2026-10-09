@@ -25,3 +25,9 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Type check
         run: bun x tsc --noEmit -p tsconfig.json
+      - name: Web workflow regression tests
+        run: bun run test:web
+      - name: Install headless Chromium
+        run: bunx playwright install --with-deps chromium --only-shell
+      - name: Browser rendering integration tests
+        run: bun run test:web:browser

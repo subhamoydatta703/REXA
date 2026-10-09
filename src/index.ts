@@ -8,6 +8,7 @@ import { executeCommand } from "./tools/executeTools";
 import { getProjectTree } from "./tools/FileTools";
 import { gitCommand } from "./tools/GitTools";
 import { search } from "./tools/SearchTool";
+import { readUrl } from "./tools/ReadUrlTool";
 import { Orchestrator } from "./orchestration/Orchestrator";
 import { Supervisor } from "./orchestration/Supervisor";
 import { ResearchAgent } from "./agent/ResearchAgent";
@@ -144,6 +145,7 @@ async function main() {
         toolRegistry.registerTool(executeCommand);
         toolRegistry.registerTool(getProjectTree);
         toolRegistry.registerTool(search);
+        toolRegistry.registerTool(readUrl);
         toolRegistry.registerTool(saveMemory);
         toolRegistry.registerTool(searchMemory);
 
