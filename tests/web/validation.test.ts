@@ -27,6 +27,12 @@ describe("URL-aware validation", () => {
     test.each(["8.8.8.8", "93.184.216.34", "2606:4700:4700::1111", "2001:4860:4860::8888"])('accepts public address %s', address => {
         expect(isPublicAddress(address)).toBe(true);
     });
+    test.each(["::ffff:8.8.8.8", "::ffff:808:808", "::ffff:10.1.2.3", "::ffff:192.168.1.1"])('blocks IPv4-mapped IPv6 address %s', address => {
+        expect(isPublicAddress(address)).toBe(false);
+    });
+    test.each(["", "example.com", "999.1.1.1"])('rejects invalid address %s', address => {
+        expect(isPublicAddress(address)).toBe(false);
+    });
     test.each(["http://localhost/", "http://127.1/", "http://2130706433/", "http://[::ffff:127.0.0.1]/", "file:///etc/passwd", "https://user:pass@example.com/"])('rejects unsafe URL %s', url => {
         expect(() => parsePublicUrl(url)).toThrow();
     });
