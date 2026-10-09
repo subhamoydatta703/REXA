@@ -13,6 +13,7 @@ const CONFIG_KEY_FILE = path.join(CONFIG_DIR, "config.key");
 const KEYTAR_SERVICE = "rexa";
 const GEMINI_ACCOUNT = "gemini-api-key";
 const TAVILY_ACCOUNT = "tavily-api-key";
+const BRIGHTDATA_ACCOUNT = "brightdata-api-key";
 const CLI_AUTH_ACCOUNT = "cli-auth-token";
 const CLI_USER_ID_ACCOUNT = "cli-user-id";
 
@@ -63,6 +64,7 @@ const AUTH_TAG_LENGTH = 16;
 export interface RexaConfig {
     geminiApiKey?: string;
     tavilyApiKey?: string;
+    brightDataApiKey?: string;
     cliAuthToken?: string;
     cliUserId?: string;
     updatedAt?: string;
@@ -137,14 +139,16 @@ export class ConfigManager {
     static async getConfig(): Promise<RexaConfig> {
         const fromVault: RexaConfig = {};
         try {
-            const [geminiApiKey, tavilyApiKey, cliAuthToken, cliUserId] = await Promise.all([
+            const [geminiApiKey, tavilyApiKey, cliAuthToken, cliUserId, brightDataApiKey] = await Promise.all([
                 keytar.getPassword(KEYTAR_SERVICE, GEMINI_ACCOUNT),
                 keytar.getPassword(KEYTAR_SERVICE, TAVILY_ACCOUNT),
                 keytar.getPassword(KEYTAR_SERVICE, CLI_AUTH_ACCOUNT),
                 keytar.getPassword(KEYTAR_SERVICE, CLI_USER_ID_ACCOUNT),
+                keytar.getPassword(KEYTAR_SERVICE, BRIGHTDATA_ACCOUNT),
             ]);
             if (geminiApiKey) fromVault.geminiApiKey = geminiApiKey;
             if (tavilyApiKey) fromVault.tavilyApiKey = tavilyApiKey;
+            if (brightDataApiKey) fromVault.brightDataApiKey = brightDataApiKey;
             if (cliAuthToken) fromVault.cliAuthToken = cliAuthToken;
             if (cliUserId) fromVault.cliUserId = cliUserId;
         } catch {
@@ -161,6 +165,9 @@ export class ConfigManager {
                 if (parsed.tavilyApiKey) {
                     parsed.tavilyApiKey = decrypt(parsed.tavilyApiKey);
                 }
+                if (parsed.brightDataApiKey) {
+                    parsed.brightDataApiKey = decrypt(parsed.brightDataApiKey);
+                }
                 if (parsed.cliAuthToken) {
                     parsed.cliAuthToken = decrypt(parsed.cliAuthToken);
                 }
@@ -170,6 +177,7 @@ export class ConfigManager {
                 return {
                     geminiApiKey: fromVault.geminiApiKey || parsed.geminiApiKey,
                     tavilyApiKey: fromVault.tavilyApiKey || parsed.tavilyApiKey,
+                    brightDataApiKey: fromVault.brightDataApiKey || parsed.brightDataApiKey,
                     cliAuthToken: fromVault.cliAuthToken || parsed.cliAuthToken,
                     cliUserId: fromVault.cliUserId || parsed.cliUserId,
                     updatedAt: parsed.updatedAt,
@@ -195,6 +203,7 @@ export class ConfigManager {
             const dataToSave = {
                 geminiApiKey: config.geminiApiKey ? encrypt(config.geminiApiKey) : undefined,
                 tavilyApiKey: config.tavilyApiKey ? encrypt(config.tavilyApiKey) : undefined,
+                brightDataApiKey: config.brightDataApiKey ? encrypt(config.brightDataApiKey) : undefined,
                 cliAuthToken: config.cliAuthToken ? encrypt(config.cliAuthToken) : undefined,
                 cliUserId: config.cliUserId ? encrypt(config.cliUserId) : undefined,
                 updatedAt: config.updatedAt,
@@ -286,8 +295,30 @@ export class ConfigManager {
     }
 
     /**
-     * Gets Tavily Search API Key from env vars or encrypted config.
+     * Gets the Bright Data API key from the environment or secure storage.
      */
+    static async getBrightDataApiKey(): Promise<string | undefined> {
+        const key = process.env.BRIGHTDATA_API_KEY?.trim();
+        if (key) return key;
+        return (await this.getConfig()).brightDataApiKey?.trim() || undefined;
+    }
+
+    static async setBrightDataApiKey(key: string): Promise<void> {
+        const trimmed = key.trim();
+        if (!trimmed) throw new Error("Bright Data API key cannot be empty.");
+        const currentConfig = await this.getConfig();
+        let savedInVault = false;
+        try {
+            await keytar.setPassword(KEYTAR_SERVICE, BRIGHTDATA_ACCOUNT, trimmed);
+            savedInVault = true;
+        } catch { /* Use encrypted file storage when the OS vault is unavailable. */ }
+        const savedInFile = this.saveConfig({ ...currentConfig, brightDataApiKey: trimmed, updatedAt: new Date().toISOString() });
+        if (!savedInVault && !savedInFile) throw new Error("Could not save the Bright Data API key.");
+        process.env.BRIGHTDATA_API_KEY = trimmed;
+        console.log(chalk.green("  Bright Data API key securely saved."));
+    }
+
+    /** Gets the Tavily Search API key from the environment or secure storage. */
     static async getTavilyApiKey(): Promise<string | undefined> {
         const envKey = process.env.TVLY_API_KEY || process.env.TAVILY_API_KEY;
         if (envKey && envKey.trim()) return envKey.trim();

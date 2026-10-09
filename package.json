@@ -1,6 +1,6 @@
 {
   "name": "rexa-agent",
-  "version": "2.0.0",
+  "version": "2.0.2",
   "description": "Autonomous terminal agent harness engineered to understand software tasks, conduct web research, reflect on tool plans, safely modify codebases with automated verification, execute commands in Docker, enforce safety guardrails with secret scanning, and retain user preferences.",
   "main": "src/index.ts",
   "module": "src/index.ts",
