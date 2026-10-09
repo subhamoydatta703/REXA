@@ -51,6 +51,9 @@
     "sandbox.Dockerfile"
   ],
   "scripts": {
+    "test:web": "bun test ./tests/web",
+    "test:web:browser": "bun test ./tests/browser",
+    "test:web:live": "bun run ./tests/web/smoke.ts",
     "typecheck": "bun x tsc --noEmit -p tsconfig.json",
     "prepublishOnly": "bun x tsc --noEmit -p tsconfig.json",
     "docker:up": "docker compose up -d",
@@ -79,6 +82,7 @@
   "dependencies": {
     "@google/genai": "^2.15.0",
     "@inquirer/prompts": "^8.7.0",
+    "@mozilla/readability": "^0.6.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "7.10.0",
     "@prisma/orm-postgres": "^8.0.0-rc.8",
@@ -91,10 +95,12 @@
     "gradient-string": "^3.0.0",
     "ink": "^7.1.1",
     "keytar": "^7.9.0",
+    "linkedom": "^0.18.13",
     "marked": "^18.0.11",
     "marked-terminal": "^7.3.0",
     "ora": "^9.4.1",
     "pg": "^8.23.0",
+    "playwright": "^1.64.0",
     "react": "^19.2.8",
     "replace-in-file": "^9.0.0",
     "winston": "^3.19.0",

@@ -23,7 +23,7 @@ export interface GeminiRawJsonError {
 
 
 export interface SupervisorDecision {
-    route: "DIRECT" | "CODE_ONLY" | "RESEARCH_AND_CODE";
+    route: "DIRECT" | "CODE_ONLY" | "RESEARCH_ONLY" | "RESEARCH_AND_CODE";
     reason: string;
     directResponse?: string;
 }

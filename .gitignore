@@ -56,5 +56,7 @@ Desktop.ini
 /generated/prisma
 
 .windsurf/
-tests/
+tests/*
+!tests/web/
+!tests/browser/
 media/

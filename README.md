@@ -76,6 +76,7 @@ User Input
 [Supervisor Routing]
     ├── DIRECT ──────────► Stream direct conversational response (no tool overhead)
     ├── CODE_ONLY ───────► Forward request directly to Coding Agent
+    ├── RESEARCH_ONLY ───► Read sources, validate the answer, and respond directly
     └── RESEARCH_AND_CODE► Execute Research Agent first ──► Synthesize brief ──► Coding Agent
                                                                                   │
     ┌─────────────────────────────────────────────────────────────────────────────┘
@@ -111,14 +112,14 @@ Terminal Interface (AgentCLI & AgentUI)
         │     └── Gemini LLM model Safety Evaluation
         │
         ├── Supervisor (src/orchestration/Supervisor.ts)
-        │     └── Structured Route Decision (DIRECT | CODE_ONLY | RESEARCH_AND_CODE)
+        │     └── Route Decision (DIRECT | CODE_ONLY | RESEARCH_ONLY | RESEARCH_AND_CODE)
         │
         ├── ResearchAgent (src/agent/ResearchAgent.ts)
-        │     └── SearchTool (Tavily, GitHub, DuckDuckGo, Web Scrape)
+        │     └── search (source discovery) + read_url (exact page content)
         │
         └── Agent / Coding Agent (src/agent/Agent.ts)
               ├── Plan Reflection Layer (Gemini LLM model)
-              ├── ToolRegistry (8 Registered Tools)
+              ├── ToolRegistry (9 Registered Tools)
               ├── ExecutionManager & Docker Sandbox
               └── OutputGuardrails (src/guardrails/output/OutputGuardrails.ts)
 ```
@@ -133,14 +134,16 @@ The orchestration subsystem coordinates message lifecycles, user safety checks, 
 - Evaluates raw user input through `InputGuardrails` before triggering downstream models.
 - Emits real-time status callbacks (`thinking...`, `researching...`, `coding...`).
 - Dispatches requests based on the decision returned by the `Supervisor`.
-- In `RESEARCH_AND_CODE` workflows, executes `ResearchAgent`, appends the research findings to the user prompt as a `RESEARCH & TECHNICAL BRIEF`, and hands off execution to the `Agent`.
+- Explicit URL-inspection requests take the `RESEARCH_ONLY` route in act mode and return a validated research answer without invoking the coding agent.
+- In `RESEARCH_AND_CODE` workflows, passes the original user request and a separate, bounded research-data message to the coding agent. Internal research does not pass through the 1,000-character user-input limit.
 
 ### Supervisor (`src/orchestration/Supervisor.ts`)
 - Employs structured JSON schema enforcement via the Gemini LLM model to classify intent:
   - `DIRECT`: Informal inquiries, greetings, identity questions, or conversational exchanges. Returned without tool invocation using the custom agent persona.
   - `CODE_ONLY`: Local repository modifications, bug fixes, refactoring, code explanation, file queries, and test executions where external research is unneeded.
+  - `RESEARCH_ONLY`: Website inspection, article summaries, comparisons, and external information requests without implementation.
   - `RESEARCH_AND_CODE`: Tasks referencing modern frameworks, external SDK updates, breaking library changes, or unfamiliar third-party APIs.
-- Features automatic fallback to `CODE_ONLY` in the event of parsing or network irregularities.
+- Explicit URL inspections have a local routing shortcut. Other requests use the supervisor, with a fallback if classification fails.
 
 ---
 
@@ -150,14 +153,9 @@ The orchestration subsystem coordinates message lifecycles, user safety checks, 
 Defined in `src/agent/ResearchAgent.ts`, this agent acts as an autonomous external researcher.
 
 - **Strict boundaries**: The research agent is strictly read-only and external. It cannot write files, delete code, execute shell commands, or modify Git state.
-- **Tools**: Restricted exclusively to the `search` tool.
-- **Workflow**: Performs iterative queries across up to 60 steps to synthesize a structured technical brief containing:
-  - Objective summary
-  - Technical requirements and library specifications
-  - Architectural constraints and implementation risks
-  - Coding guidance (without guessing local file names)
-  - Verified source references and confidence rating
-- **Output**: The brief is fed directly into the coding agent as authoritative context; it is not dumped raw to the terminal.
+- **Tools**: Only `search` and `read_url`, with an allowlist enforced when executing calls.
+- **Workflow**: Reads up to three supplied URLs before asking the model to answer. Each request starts with fresh evidence. Failed retrieval of every supplied URL returns an explicit limitation rather than an invented page summary.
+- **Output**: Information-only requests return the research answer directly. Implementation requests pass research to the coding agent as untrusted source data, bounded to 40,000 characters.
 
 ### Coding agent
 Defined in `src/agent/Agent.ts`, this agent serves as the autonomous software engineer.
@@ -176,7 +174,7 @@ REXA supports two operational modes toggled interactively with the `Tab` key:
 | Mode | Key behavior | Tool availability | Best used for |
 | :--- | :--- | :--- | :--- |
 | **Plan** | Analyzes context and outlines architectural solutions, affected files, risks, and testing strategies without executing mutations. External research is described conceptually rather than executed. | Disabled (`tools: []`) | Architectural design, feasibility assessments, task decomposition, and code reviews. |
-| **Act** | Executes actions autonomously: creates files, modifies code, runs commands inside Docker, and iterates against errors. | Fully enabled (All 8 registered tools) | Implementation, bug fixing, test running, refactoring, and command execution. |
+| **Act** | Reads websites, researches questions, or executes coding actions according to the request. | Fully enabled (9 registered tools; research uses only web tools) | Website inspection, research, implementation, bug fixing, and test running. |
 
 ---
 
@@ -206,7 +204,7 @@ $ rexa
 
 ## Available tools
 
-REXA registers exactly 8 core tools in `src/index.ts`:
+REXA registers exactly 9 core tools in `src/index.ts`:
 
 | Tool name | Primary input parameters | Operational description |
 | :--- | :--- | :--- |
@@ -215,7 +213,8 @@ REXA registers exactly 8 core tools in `src/index.ts`:
 | `coding_context_tool` | `path`, `instruction` | Loads file contents into memory with line numbers and token-conscious pagination. |
 | `code_tool` | `create`, `write`, `edit` | Performs atomic file creation, full overwrites, or granular patch operations (`before`, `after`, `replace`, `delete`). Re-reads modified files to verify content consistency. |
 | `get_project_tree` | None | Traverses project directory structure up to 300 entries, excluding artifacts such as `node_modules`, `dist`, `.git`, and build outputs. |
-| `search` | `query` | 4-tier web search engine cascading from Tavily API to GitHub API, DuckDuckGo HTML scraping, and direct webpage fetching with built-in SSRF protections. |
+| `search` | `query` | Discovers sources through Tavily or DuckDuckGo. Results are search snippets; exact URLs must be read separately. |
+| `read_url` | `url` | Retrieves exact page content with bounded redirects, readable HTML extraction, optional Chromium rendering, and Tavily extraction fallback. Returns retrieval status, source URLs, limitations, and text. |
 | `save_memory` | `text` | Persists explicit user preferences and development rules to the authenticated cloud memory service. |
 | `search_memory` | `query` | Retrieves authenticated cross-session preferences when explicit context recall is requested. |
 
@@ -254,9 +253,32 @@ Security in REXA is integrated directly into the agent reasoning loop rather tha
 - Calculates Shannon entropy across alphanumeric character sequences of 16 characters or longer. Tokens with entropy exceeding `4.5` are flagged as prospective secrets.
 - Redacts identified credentials in terminal output and debug logs using `[REDACTED]`.
 
-### SSRF protection in web search
-- Blocks local loopback addresses (`127.0.0.1`, `localhost`), link-local metadata addresses (`169.254.169.254`), and private IPv4 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
-- Refuses to follow automatic HTTP redirects when performing direct webpage scraping.
+### Web retrieval boundaries
+- Direct requests reject local, private, and reserved IPv4/IPv6 addresses, check all DNS results, and pin connections to a validated address. Redirect destinations are revalidated; HTTPS downgrades are rejected.
+- Downloads are bounded to 2 MB and extracted text to 30,000 characters per page. Retrieval reports truncation and partial access.
+- Browser rendering uses a temporary Chromium context in a Node worker. Read-only HTTP requests pass through the same validated transport; service workers, websockets, and downloads are disabled.
+- Public URLs are excluded from whole-string entropy scoring; credentials and suspicious query values remain checked.
+
+### Reading websites
+In **act** mode, ask `Check https://example.com and give me details`. Plan mode remains tool-free and does not fetch websites.
+
+Static HTML, plain text, JSON, and GitHub README/file/issue/PR bodies are supported. GitHub comments, reviews, and diffs are not automatically retrieved. PDFs and other binary formats return an unsupported-format result. Login pages, access challenges, unavailable content, and partial extraction are reported explicitly.
+
+For JavaScript-dependent pages, install the optional Chromium browser files:
+
+```bash
+bunx playwright install chromium --only-shell
+```
+
+The rendering fallback also requires Node.js 20 or newer. A missing browser does not prevent ordinary HTTP reads. An optional Tavily key enables provider-based extraction when rendering cannot obtain the content. Reading one page does not crawl the entire website.
+
+Web workflow checks:
+
+```bash
+bun run test:web
+bun run test:web:browser  # requires Chromium
+bun run test:web:live     # opt-in public-page retrieval; no model calls
+```
 
 ---
 
@@ -384,7 +406,9 @@ REXA integrates with the Gemini LLM model through `GeminiProvider.ts`:
 │   │   ├── executeTools.ts          # Sandboxed command execution tool
 │   │   ├── ExecutionManager.ts      # Docker container lifecycle management
 │   │   ├── CommandPolicy.ts         # Command whitelist, blacklist, and confirmation rules
-│   │   ├── SearchTool.ts            # 4-tier web search implementation
+│   │   ├── SearchTool.ts            # Tavily / DuckDuckGo source discovery
+│   │   ├── ReadUrlTool.ts           # Exact URL content and retrieval evidence
+│   │   ├── web/                     # Bounded HTTP, HTML extraction, browser worker
 │   │   ├── MemoryTools.ts           # Cloud memory save and search interfaces
 │   │   └── MemorySearchRules.ts     # Decision criteria for memory queries
 │   ├── guardrails/

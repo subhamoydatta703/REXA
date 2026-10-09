@@ -51,16 +51,17 @@ Before submitting pull requests, familiarize yourself with REXA's core subsystem
 
 - **Orchestration layer (`src/orchestration/`)**:
   - `Orchestrator.ts`: Manages input validation, status updates, and execution dispatching.
-  - `Supervisor.ts` & `SupervisorPrompt.ts`: Classifies user requests into `DIRECT`, `CODE_ONLY`, or `RESEARCH_AND_CODE` routing paths.
+  - `Supervisor.ts` & `SupervisorPrompt.ts`: Classifies user requests into `DIRECT`, `CODE_ONLY`, `RESEARCH_ONLY`, or `RESEARCH_AND_CODE` routing paths.
 - **Agent layer (`src/agent/`)**:
-  - `ResearchAgent.ts`: Strictly read-only, external researcher providing structured briefs using the `search` tool.
+  - `ResearchAgent.ts`: Read-only external researcher using `search` and `read_url`; returns information directly or supplies research data for coding tasks.
   - `Agent.ts`: Core coding agent executing up to 60-step task loops with autonomous tool plan reflection before execution.
   - `AgentMode.ts`: Manages `plan` (read-only, design-focused) and `act` (autonomous tool execution) modes.
 - **Tooling suite (`src/tools/`)**:
-  - `ToolRegistry.ts`: Enforces Zod parameter schemas for all 8 registered tools.
+  - `ToolRegistry.ts`: Registers the 9 tools and their Zod parameter schemas.
   - `CodingTools.ts` & `FileTools.ts`: Provides verified atomic file modifications and directory traversal.
   - `executeTools.ts` & `CommandPolicy.ts`: Manages Docker container commands, command whitelists, and confirmation policies.
-  - `SearchTool.ts`: Implements the 4-tier search engine (Tavily, GitHub API, DuckDuckGo, direct HTTP) with SSRF defenses.
+  - `SearchTool.ts`: Discovers sources with Tavily or DuckDuckGo; search snippets are not page contents.
+  - `ReadUrlTool.ts` & `web/`: Read exact URLs with DNS-pinned HTTP, content extraction, and a Node/Chromium fallback. Browser requests use the same bounded transport.
   - `MemoryTools.ts`: Handles authenticated cloud memory storage and semantic recall.
 - **Guardrails & safety (`src/guardrails/`)**:
   - `InputGuardrails.ts`: Detects prompt injections, jailbreaks, and malicious directives.
