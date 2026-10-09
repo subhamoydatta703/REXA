@@ -214,7 +214,7 @@ REXA registers exactly 9 core tools in `src/index.ts`:
 | `code_tool` | `create`, `write`, `edit` | Performs atomic file creation, full overwrites, or granular patch operations (`before`, `after`, `replace`, `delete`). Re-reads modified files to verify content consistency. |
 | `get_project_tree` | None | Traverses project directory structure up to 300 entries, excluding artifacts such as `node_modules`, `dist`, `.git`, and build outputs. |
 | `search` | `query` | Discovers sources through Tavily or DuckDuckGo. Results are search snippets; exact URLs must be read separately. |
-| `read_url` | `url` | Retrieves exact page content with bounded redirects, readable HTML extraction, optional Chromium rendering, and Tavily extraction fallback. Returns retrieval status, source URLs, limitations, and text. |
+| `read_url` | `url` | Retrieves exact page content with bounded redirects, readable HTML extraction, optional Chromium rendering, and Tavily extraction fallback. LinkedIn personal profile URLs use Bright Data to retrieve available profile fields. Returns retrieval status, source URLs, limitations, and content. |
 | `save_memory` | `text` | Persists explicit user preferences and development rules to the authenticated cloud memory service. |
 | `search_memory` | `query` | Retrieves authenticated cross-session preferences when explicit context recall is requested. |
 
@@ -257,6 +257,7 @@ Security in REXA is integrated directly into the agent reasoning loop rather tha
 - Direct requests reject local, private, and reserved IPv4/IPv6 addresses, check all DNS results, and pin connections to a validated address. Redirect destinations are revalidated; HTTPS downgrades are rejected.
 - Downloads are bounded to 2 MB and extracted text to 30,000 characters per page. Retrieval reports truncation and partial access.
 - Browser rendering uses a temporary Chromium context in a Node worker. Read-only HTTP requests pass through the same validated transport; service workers, websockets, and downloads are disabled.
+- LinkedIn personal profile URLs are validated before being sent to Bright Data's fixed API endpoint. The account token is sent only to that endpoint, with redirects disabled. Returned profile URLs must match the requested profile.
 - Public URLs are excluded from whole-string entropy scoring; credentials and suspicious query values remain checked.
 
 ### Reading websites
@@ -271,6 +272,8 @@ bunx playwright install chromium --only-shell
 ```
 
 The rendering fallback also requires Node.js 20 or newer. A missing browser does not prevent ordinary HTTP reads. An optional Tavily key enables provider-based extraction when rendering cannot obtain the content. Reading one page does not crawl the entire website.
+
+LinkedIn personal profile URLs (`linkedin.com/in/...`) automatically use Bright Data's LinkedIn Profiles scraper when read. Configure an account API token as described in [LinkedIn profile extraction](#linkedin-profile-extraction). Users then share a profile URL and ask for its details; no copying text, browser login, or browser extension is needed. Company pages and posts use the ordinary page reader and may remain inaccessible.
 
 Web workflow checks:
 
@@ -298,6 +301,7 @@ REXA features an explicit, account-backed memory architecture:
 - **Runtime**: [Bun](https://bun.sh/) (version 1.1 or higher) or Node.js (version 18 or higher).
 - **Containerization**: [Docker Desktop](https://www.docker.com/) running locally for command execution isolation.
 - **API key**: An active Google Gemini API key.
+- **Optional LinkedIn extraction**: A Bright Data account API token with access to the LinkedIn Profiles scraper and available credits.
 
 ### Global installation
 Install REXA globally via npm:
@@ -349,9 +353,35 @@ rexa config set-key
 # Store an optional Tavily Search API key
 rexa config set-tavily-key
 
+# Store your Bright Data account API token for LinkedIn profile extraction
+rexa config set-brightdata-key
+
 # Launch REXA with customized step limits
 rexa --max-steps 45
 ```
+
+### LinkedIn profile extraction
+
+1. Open [Bright Data's LinkedIn Profiles scraper](https://brightdata.com/products/web-scraper/linkedin/profiles) and ensure your account can use the **LinkedIn people profiles** scraper (`gd_l1viktl72bvl7bjuj0`). Check current credits and pricing in your Bright Data account.
+2. Obtain your **account API token** from [Bright Data Settings > Users/API keys](https://brightdata.com/cp/setting/users). Playwright/Selenium connection URLs, Browser API zone usernames, and zone passwords are different credentials and do not work with this integration. The Browser, Web Unlocker, and SERP APIs are separate products.
+3. Save the token using the masked prompt. For a source checkout:
+
+   ```bash
+   bun run src/index.ts config set-brightdata-key
+   ```
+
+   For a globally installed CLI, use `rexa config set-brightdata-key`. The token uses the OS credential vault and encrypted configuration storage. Do not paste it into the agent chat.
+4. Start REXA with `bun run rexa` (or `rexa` for a global installation), switch to **act** mode, and ask:
+
+   ```text
+   Tell me about this LinkedIn page: https://www.linkedin.com/in/subhamoy-datta/
+   ```
+
+REXA submits the profile URL, polls the collection, downloads the structured result, and gives the retrieved details to Gemini to answer the question. Available fields can include name, position, location, about, current company, experience, education, skills, certifications, and projects. Fields depend on what the provider returns; missing data is not inferred.
+
+Results include the source URL, provider, and retrieval time. They are marked partial because data can be missing or outdated; REXA does not claim to have read the entire page. Only matching personal profile URLs under `/in/` use this integration. Private or unavailable profiles may yield no readable result.
+
+No additional package or local browser setup is needed for this integration. Each read starts a collection and can consume Bright Data credits. The overall wait is capped at two minutes, with a 30-second timeout for individual API requests. A timed-out collection may continue at the provider and consume credits; a retry starts a new collection. See [collection progress documentation](https://docs.brightdata.com/api-reference/scrapers/management-apis/monitor-progress).
 
 ### Environment variables
 
@@ -363,6 +393,7 @@ Environment variables take precedence over credentials stored in the local vault
 | `GEMINI_GUARD_API_KEY` | Dedicated API key for guardrail evaluations (falls back to `GEMINI_API_KEY`). |
 | `GEMINI_STREAMING_API_KEY` | Dedicated API key for streaming operations (falls back to `GEMINI_API_KEY`). |
 | `TVLY_API_KEY` | Optional Tavily search key for enhanced research queries. |
+| `BRIGHTDATA_API_KEY` | Bright Data account API token for LinkedIn personal profile extraction; overrides the saved token. Browser API connection credentials are not accepted. |
 | `REXA_CLI_TOKEN` | Overrides the authenticated CLI web token. |
 | `REXA_WORKSPACE` | Overrides the host directory mounted inside `/app` in Docker (defaults to `process.cwd()`). |
 | `REXA_CONFIG_KEY` | Custom 32-byte Base64 key for file-based configuration encryption. |
@@ -460,6 +491,23 @@ REXA integrates with the Gemini LLM model through `GeminiProvider.ts`:
 
 ## Troubleshooting
 
+### LinkedIn extraction errors
+
+Complete [LinkedIn profile extraction setup](#linkedin-profile-extraction) first. Restart REXA after changing credentials. If `BRIGHTDATA_API_KEY` is present in your environment or `.env`, it overrides the saved token; update or remove that value when replacing a token using the CLI.
+
+| Error or symptom | What to check |
+| :--- | :--- |
+| `configuration_required` | Save an account API token with `rexa config set-brightdata-key`. If REXA detects Browser API credentials, replace them with the account token. |
+| HTTP 400 | Read the redacted **Provider message** for the specific rejection. REXA identifies whether it occurred during the collection request, progress check, or snapshot download. Check the indicated input or account issue rather than assuming a Gemini key problem. |
+| HTTP 401 or 403 | Check the account API token and permissions to use the LinkedIn Profiles scraper. |
+| HTTP 402 | Check available Bright Data credits and billing status. |
+| HTTP 429 | The Bright Data rate limit was reached; retry later. |
+| Timeout or collection still processing | REXA stopped waiting. The provider collection may continue and consume credits; retrying starts another collection. |
+| No readable matching profile | The provider returned no usable data for the requested profile. Check profile visibility and the URL. REXA rejects error records and mismatched profiles. |
+| LinkedIn HTTP 999 | The ordinary page reader was denied access. Personal `/in/` profile URLs should use Bright Data; company, post, and other page URLs do not use the profile scraper. |
+
+When reporting a failure, share the redacted provider message and the failed stage. Keep API tokens and Browser API connection credentials private.
+
 ### Docker sandbox is unavailable
 - Ensure Docker Desktop is active: verify with `docker version`.
 - Verify Docker Compose availability: verify with `docker compose version`.
@@ -485,6 +533,9 @@ To contribute or test modifications locally:
 ```bash
 # Run strict TypeScript compilation checks
 bun run typecheck
+
+# Run web retrieval and mocked LinkedIn extraction tests (no live API calls)
+bun run test:web
 
 # Start local Docker sandbox manually
 bun run docker:up

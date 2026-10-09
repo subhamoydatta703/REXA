@@ -92,6 +92,18 @@ async function main() {
             process.exit(0);
         });
 
+    configCmd
+        .command("set-brightdata-key")
+        .description("Save the Bright Data API key for LinkedIn profile extraction")
+        .action(async () => {
+            let key: string;
+            try {
+                key = await password({ message: "Enter your Bright Data API key:", mask: "*" });
+            } catch { process.exit(0); }
+            await ConfigManager.setBrightDataApiKey(key);
+            process.exit(0);
+        });
+
     // Default action when running 'rexa' (starting the interactive CLI agent)
     program.action(async (options) => {
         if (options.setKey) {

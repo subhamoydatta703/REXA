@@ -19,6 +19,7 @@ All contributors and participants agree to abide by the [Code of Conduct](./CODE
 - [Node.js](https://nodejs.org/) version 18 or higher
 - [Docker Desktop](https://www.docker.com/) for sandboxed command execution
 - A Google Gemini API key for running live agent sessions
+- Optional: a Bright Data account API token with LinkedIn Profiles scraper access for live profile extraction. Mocked web tests do not require it.
 
 ### Local development setup
 
@@ -62,6 +63,7 @@ Before submitting pull requests, familiarize yourself with REXA's core subsystem
   - `executeTools.ts` & `CommandPolicy.ts`: Manages Docker container commands, command whitelists, and confirmation policies.
   - `SearchTool.ts`: Discovers sources with Tavily or DuckDuckGo; search snippets are not page contents.
   - `ReadUrlTool.ts` & `web/`: Read exact URLs with DNS-pinned HTTP, content extraction, and a Node/Chromium fallback. Browser requests use the same bounded transport.
+  - `web/LinkedInReader.ts`: Routes personal LinkedIn `/in/` URLs through Bright Data's LinkedIn Profiles scraper. Submits one collection per read, polls progress, checks the returned profile URL, and provides available fields with retrieval time. It uses a fixed API origin with redirects disabled and bounded responses and timeouts.
   - `MemoryTools.ts`: Handles authenticated cloud memory storage and semantic recall.
 - **Guardrails & safety (`src/guardrails/`)**:
   - `InputGuardrails.ts`: Detects prompt injections, jailbreaks, and malicious directives.
@@ -80,6 +82,16 @@ The project enforces strict TypeScript checking. All changes must pass type chec
 ```bash
 bun run typecheck
 ```
+
+### Web retrieval verification
+
+```bash
+bun run test:web
+```
+
+The suite includes `tests/web/linkedin.test.ts`, which injects mock HTTP responses, credentials, and time. It covers profile routing and URL matching, async collection polling, missing or incorrect credential types, timeouts, provider errors, response size limits, and credential redaction. These checks do not call Bright Data or consume credits.
+
+For a live manual check, follow the [LinkedIn profile extraction setup](README.md#linkedin-profile-extraction). Use an account API token, not Playwright/Selenium connection credentials, and confirm scraper access and available credits. Each read starts a provider collection; timed-out collections can still consume credits. Never put live tokens or personal profile response dumps into test fixtures.
 
 ### Zero-emoji policy
 To ensure clean terminal presentation and compatibility across diverse terminal emulators, do not include emojis in CLI output messages, spinner statuses, system prompts, error strings, or core documentation.
