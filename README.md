@@ -31,6 +31,7 @@
 - [Specialized agents](#specialized-agents)
   - [Research agent](#research-agent)
   - [Coding agent](#coding-agent)
+  - [Debugging agent](#debugging-agent)
 - [Execution modes](#execution-modes)
 - [Five core improvements](#five-core-improvements)
 - [Sessions and local commands](#sessions-and-local-commands)
@@ -44,6 +45,7 @@
 - [Installation and setup](#installation-and-setup)
 - [Configuration and credentials](#configuration-and-credentials)
 - [LLM provider integration](#llm-provider-integration)
+- [Current release and Cosmos roadmap](#current-release-and-cosmos-roadmap)
 - [Project structure](#project-structure)
 - [Comparative analysis](#comparative-analysis)
 - [Troubleshooting](#troubleshooting)
@@ -59,10 +61,12 @@ Modern software development requires balancing autonomous execution with safety 
 
 1. **Intelligent multi-agent routing**: Tasks are classified dynamically into direct conversational responses, local repository coding tasks, or combined research-and-code workflows.
 2. **Autonomous web research**: External documentation, release notes, and third-party APIs are researched prior to code modification without modifying local files.
-3. **Plan reflection**: Proposed tool calls undergo a separate Gemini review before execution. This can identify mistakes or redundant actions, but does not guarantee their elimination.
+3. **Planning and reflection**: Plan mode enforces read/web-only tools. In act mode, proposed tool calls undergo a separate Gemini review before execution. This can identify mistakes or redundant actions, but does not guarantee their elimination.
 4. **Sandboxed execution**: `execute_command` runs inside Docker with CPU, memory, and PID limits. The separate `git_command` tool runs `/app` Git operations on the host; permissions apply to both tools.
-5. **Dual guardrail validation**: Every user input and agent response is evaluated independently by specialized guardrail evaluators powered by the Gemini LLM model and Shannon entropy secret scanning.
+5. **Guardrail validation**: Input and output checks combine secret scanning with Gemini-backed classification. Some inputs take local shortcuts, and model-check failures have fallback behavior; this is not a guarantee that every response receives a successful model evaluation.
 6. **Explicit persistent memory**: Cross-session user preferences and development rules are stored securely through authenticated endpoints.
+7. **Test, repair, and retest**: Coding completions can trigger a separate debugging agent that creates or reuses relevant tests. The application executes them, requests bounded repairs, reruns checks, and reports recorded results.
+8. **Conversation continuity**: Workspace-scoped local sessions support resume, interruption recovery, and context compaction independently of cloud preference memory.
 
 ---
 
@@ -91,13 +95,20 @@ User Input
     ├── 2. Perform plan reflection to validate tool relevance and safety
     ├── 3. Execute approved tool calls (Docker sandbox / verified file modifications)
     ├── 4. Ingest tool feedback and test outputs into context
-    └── 5. Repeat until objective is fulfilled or step limit is reached
+    └── 5. Repeat until a completion candidate or step limit is reached
     │
     ▼
-[Output Guardrails] ──(Detects secrets/violations)──► Redact & sanitize response
+[Feature Verification] (act-mode coding work)
+    ├── Debugging Agent prepares or reuses tests
+    ├── Verification Runner executes permission-controlled checks
+    ├── New failures → investigate → repair → rerun (bounded)
+    └── Workflow records completion or a blocker
+    │
+    ▼
+[Output Guardrails] ──(Detects secrets/violations)──► Block unsafe candidate
     │ (Safe)
     ▼
-Rendered Terminal Output
+Final workspace-stability check → recorded verification report → terminal output
 ```
 
 ---
@@ -125,6 +136,8 @@ Terminal Interface (AgentCLI & AgentUI)
               ├── Plan Reflection Layer (Gemini LLM model)
               ├── ToolRegistry & ToolDispatcher (mode, schema, permission checks)
               ├── ExecutionManager & Docker Sandbox
+              ├── DebuggingAgent (src/agent/DebuggingAgent.ts)
+              ├── VerificationWorkflow / VerificationRunner / VerificationResults
               └── OutputGuardrails (src/guardrails/output/OutputGuardrails.ts)
 ```
 
@@ -172,6 +185,12 @@ Defined in `src/agent/Agent.ts`, this agent serves as the autonomous software en
 - **Iterative feedback**: Can run tests and builds via `execute_command`, inspect results, and revise changes within the step limit. Test selection and solution correctness still depend on the model and the available checks.
 
 ---
+
+### Debugging agent
+
+Defined in `src/agent/DebuggingAgent.ts`, this agent inspects connected source files and the project's test setup, creates or reuses behavior-focused tests, and investigates recorded failures. It can read files and use `code_tool`; it cannot directly execute commands, install dependencies, deploy, or perform Git operations.
+
+It submits coverage, test commands, findings, and blockers through `submit_debugging`. The verification runner executes commands through the normal dispatcher and permissions. A repair always leads to another test run. The workflow decides whether another repair is needed, checks are conclusive, or completion is blocked. See [automatic verification and repair](#automatic-verification-and-repair) for limits.
 
 ## Execution modes
 
@@ -307,6 +326,8 @@ Source snapshots compare discovered, nonprotected, nonignored text files before 
 
 Passing checks establish only what the selected commands test. A check failing both before and after changes does not prove that Rexa introduced no additional errors. Repair reasoning, test adequacy, and preservation of intent still require review; instructions against weakening checks are not a semantic guarantee.
 
+Snapshots require **ripgrep on the host PATH**, even when checks run inside Docker. If the initial snapshot cannot be established, checks can return `unavailable` before a command is dispatched. Read the recorded detail for the underlying failure; `unavailable` is not a failed assertion. Snapshot errors retain bounded, sanitized diagnostics.
+
 ---
 
 ## Interactive terminal experience
@@ -318,6 +339,8 @@ REXA delivers a focused developer experience directly in the terminal:
 - **Formatted Markdown output**: Parses and syntax-highlights Markdown tables, code blocks, bulleted lists, and diffs using specialized terminal renderers.
 - **Error classification**: Translates raw network, provider, and container errors into clear, actionable advice using `ErrorTranslator.ts`.
 
+The following is an illustrative interaction, not output from a recorded test run:
+
 ```text
 $ rexa
   > Yo, it's me... REXA. What's the plan?
@@ -328,7 +351,7 @@ $ rexa
   [execute_command] running... [bun test tests/auth.test.ts]
   rexa · 14:22
   Resolved session validation by handling expired token boundaries.
-  All 12 test assertions now pass.
+  Verification report: selected checks and their recorded outcomes.
 ```
 
 ---
@@ -345,7 +368,7 @@ REXA registers repository, editing, command, web, and memory tools in `src/index
 | `search_code` | `pattern`, `glob`, `directory`, `literal`, `cursor`, `max_results` | Bounded ripgrep text matches with paths and line numbers; literal search by default. |
 | `read_file` | `path`, `start_line`, `end_line`, `max_bytes` | Numbered source ranges with whole-file hash and continuation information. |
 | `read_multiple_files` | `paths` | Read up to ten files with per-file results or errors. |
-| `coding_context_tool` | `path`, `instruction` | Loads file contents into memory with line numbers and token-conscious pagination. |
+| `coding_context_tool` | `path`, `instruction` | Compatibility wrapper for a bounded numbered file read with a whole-file hash. Use `read_file` for explicit ranges. |
 | `code_tool` | `operation`, `path`, `content`, `changes`, `expected_hash`, or an `operations` batch | Creates, writes, edits, or deletes files with validation and checkpoints. Targeted changes support `before`, `after`, `replace`, and `delete`. |
 | `get_project_tree` | Same pagination arguments as `glob_files` | Compatibility name for paginated file listing. |
 | `poll_process` | `id` | Inspect background status and output; completed command results include checkpoint information. |
@@ -383,7 +406,7 @@ File tools reject paths outside the active project, including symlink escapes. P
 
 ## Docker sandbox environment
 
-To prevent unexpected side effects on the host workstation, command executions take place inside a managed Docker container:
+`execute_command` runs inside a managed Docker container. Its writable project mount means approved commands can still change host project files:
 
 - **Base image**: `ubuntu:22.04` with pre-installed toolchains (`Node.js`, `Bun`, `npm`, `Python 3`, `curl`, `git`).
 - **Isolation boundaries**:
@@ -448,9 +471,10 @@ bun run test:web:live     # opt-in public-page retrieval; no model calls
 
 REXA features an explicit, account-backed memory architecture:
 
-- **Explicit intent requirement**: The agent invokes `save_memory` only when explicitly instructed by the user (e.g., *"Remember that this project uses Vitest instead of Jest"*).
-- **Security safeguards**: Passwords, API keys, repository code blocks, and conversation dumps are strictly blocked from memory storage.
-- **Search guidelines**: Governed by `MemorySearchRules.ts`. The agent searches memory only when addressing personal preferences, conventions, or past decisions. General coding questions and file queries default to reading repository code as the source of truth.
+- **Intended use**: Tool descriptions instruct the agent to save only short facts or preferences the user explicitly asked it to remember, such as *"Remember that this project uses Vitest instead of Jest"*.
+- **Execution boundary**: `save_memory` and `search_memory` are external-effect tools, require authentication, and follow permission rules. Their HTTP helpers reject empty input and input longer than 8,192 characters. Instructions against saving secrets or full conversations are not a separate semantic validator in `MemoryTools.ts`.
+- **Search guidelines**: `MemorySearchRules.ts` instructs the model when preferences or previous decisions are relevant. The client calls authenticated REXA endpoints; this repository does not establish the server's database or search implementation.
+- **Separate local history**: Saved conversations and checkpoints live under `~/.rexa/workspaces/<workspace-id>`; they are not uploaded by the session store to cloud memory.
 
 ---
 
@@ -461,6 +485,7 @@ REXA features an explicit, account-backed memory architecture:
 - **Repository discovery**: `rg` (ripgrep) on the host PATH.
 - **Containerization**: [Docker Desktop](https://www.docker.com/) running locally for command execution isolation.
 - **API key**: An active Google Gemini API key.
+- **REXA authentication**: Normal startup also requires a REXA CLI account token; `rexa login` opens the authentication setup.
 - **Optional search provider**: A Tavily API key for Tavily search and extraction fallback. Without it, search uses DuckDuckGo.
 - **Optional LinkedIn extraction**: A Bright Data account API token with access to the LinkedIn Profiles scraper and available credits.
 
@@ -573,13 +598,14 @@ Environment variables take precedence over credentials stored in the local vault
 | Variable | Description |
 | :--- | :--- |
 | `GEMINI_API_KEY` | Primary API key for the Gemini LLM model. |
-| `GEMINI_GUARD_API_KEY` | Dedicated API key for guardrail evaluations (falls back to `GEMINI_API_KEY`). |
-| `GEMINI_STREAMING_API_KEY` | Dedicated API key for streaming operations (falls back to `GEMINI_API_KEY`). |
+| `GOOGLE_GEMINI_API_KEY` | Alternate Gemini key variable; `GEMINI_API_KEY` takes precedence. |
+| `GEMINI_GUARD_API_KEY` | Guardrail fallback when no explicit constructor key is supplied. Normal CLI startup passes the main Gemini key explicitly, which takes precedence. |
+| `GEMINI_STREAMING_API_KEY` | Key for the separate `GeminiStreaming.ts` helper, falling back to `GEMINI_API_KEY`; it does not select the active coding provider's key. |
 | `TVLY_API_KEY` | Optional Tavily search key for enhanced research queries. |
 | `TAVILY_API_KEY` | Alternate Tavily key variable; `TVLY_API_KEY` takes precedence when both are set. |
 | `BRIGHTDATA_API_KEY` | Bright Data account API token for LinkedIn personal profile extraction; overrides the saved token. Browser API connection credentials are not accepted. |
 | `REXA_CLI_TOKEN` | Overrides the authenticated CLI web token. |
-| `REXA_WORKSPACE` | Overrides the host directory mounted inside `/app` in Docker (defaults to `process.cwd()`). |
+| `REXA_WORKSPACE` | Compose mount input when using Compose directly. The CLI's `ExecutionManager` supplies its constructor workspace, normally the launch directory, rather than accepting this variable as a CLI workspace override. |
 | `REXA_SANDBOX_NETWORK` | Container network mode; defaults to `bridge`. Use `none` to disable networking. |
 | `REXA_SANDBOX_CPUS` | Container CPU limit; defaults to `1`. |
 | `REXA_SANDBOX_MEMORY` | Container memory limit; defaults to `1G`. |
@@ -590,12 +616,32 @@ Environment variables take precedence over credentials stored in the local vault
 
 ## LLM provider integration
 
-REXA integrates with the Gemini LLM model through `GeminiProvider.ts`:
+REXA integrates with the Gemini LLM model through `GeminiProvider.ts`.
+
+The active adapter currently hardcodes `gemini-3.8-flash`. This is the identifier in source, not a guarantee that a user's API account can access it. Thinking configuration types and a separate streaming helper exist, but the active CLI has no model or reasoning selection menu. Shared messages still use Google's `Part` type, and supervision and guardrails create Google clients directly.
 
 - **Structured function calling**: Automatically converts Zod schema definitions into JSON schema declarations.
 - **Token streaming support**: The provider supports token callbacks. The coding agent buffers response text until output validation before rendering it.
 - **Plan reflection**: Invokes an isolated reflection pass prior to tool execution to evaluate whether candidate function calls align with user constraints.
 - **Error classification**: Captures provider errors (including HTTP 429 quota exhaustion, HTTP 503 service unavailability, and context length limits) and converts them into structured user guidance.
+
+---
+
+## Current release and Cosmos roadmap
+
+The current package is `rexa-agent` version `2.1.0`. The CLI's `--version` and terminal banner still hardcode `2.0.0`; these displays are not yet aligned. REXA Cosmos is the planned release name, not evidence that a new package version has shipped.
+
+| Capability | Current state |
+| --- | --- |
+| Repository discovery, planning, safe edits, checkpoints, sessions, and Docker processes | Implemented in the source; behavior remains subject to the documented limits and available checks. |
+| Debugging agent and three-file verification workflow | Implemented, including test preparation, bounded repair, retesting, and recorded reports. |
+| Optional Tavily and Bright Data setup | Implemented with explicit uppercase Y/N decisions. |
+| Gemini coding provider | Implemented with a hardcoded model. |
+| OpenAI and Anthropic/Claude providers | Planned; adapters and dependencies are not present. |
+| `/provider`, `/model`, and `/reasoning` | Planned; not current commands. `/model` is intended to offer a reasoning submenu. |
+| Saved provider/model/effort and safe cross-provider session switching | Planned; current session records do not contain that selection. |
+
+The next provider work must cover the whole task pipeline, model-specific capabilities, credentials, tool protocols, cancellation, and session compatibility. Adding a menu alone will not remove the current Gemini dependencies. See [Developing Rexa](./DEVELOPMENT.md#current-provider-boundary-and-planned-cosmos-work).
 
 ---
 
@@ -612,6 +658,7 @@ REXA integrates with the Gemini LLM model through `GeminiProvider.ts`:
 │   ├── agent/
 │   │   ├── Agent.ts                 # Primary coding agent loop and tool execution
 │   │   ├── ResearchAgent.ts         # Read-only external research agent
+│   │   ├── DebuggingAgent.ts        # Test preparation and bounded failure investigation/repair
 │   │   ├── ReseatchAgentSystemPrompt.ts # Research persona and report specifications
 │   │   ├── AgentMode.ts             # Plan and Act mode definitions
 │   │   ├── Message.ts               # Conversation turn data contracts
@@ -641,6 +688,10 @@ REXA integrates with the Gemini LLM model through `GeminiProvider.ts`:
 │   │   ├── SessionStore.ts          # Workspace-scoped transcript snapshots
 │   │   ├── SessionRecovery.ts       # Unknown outcomes without automatic replay
 │   │   └── ContextManager.ts        # Older-context summaries and recent turns
+│   ├── verification/
+│   │   ├── VerificationWorkflow.ts  # Stages, repair decisions, and completion checks
+│   │   ├── VerificationRunner.ts    # Baseline discovery, command execution, and stability
+│   │   └── VerificationResults.ts   # Schemas, recorded evidence, and final report
 │   ├── guardrails/
 │   │   ├── input/
 │   │   │   ├── InputGuardrails.ts   # Prompt injection and malicious content detection
@@ -648,24 +699,24 @@ REXA integrates with the Gemini LLM model through `GeminiProvider.ts`:
 │   │   ├── output/
 │   │   │   ├── OutputGuardrails.ts  # Secret leak and reasoning disclosure detection
 │   │   │   └── OutputGuardrailPrompt.ts
-│   │   ├── SecretScanner.ts         # Shannon entropy and regex secret scanner
-│   │   └── types/                   # Guardrail context and result definitions
+│   │   └── types/                   # SecretScanner.ts, guardrail context and result definitions
 │   ├── providers/
 │   │   ├── LLMProvider.ts           # Provider abstraction contract
 │   │   ├── LLMResponse.ts           # Response interfaces and token callback types
 │   │   ├── GeminiProvider.ts        # Gemini LLM model implementation
+│   │   ├── GeminiConfig.ts          # Gemini thinking/output configuration type
 │   │   └── GeminiStreaming.ts       # Streaming helper utilities
 │   ├── cli/
 │   │   ├── AgentCLI.ts              # Interactive REPL session controller
 │   │   ├── LocalCommands.ts         # Resume, undo, permissions, and process commands
+│   │   ├── OptionalApiSetup.ts      # Optional Tavily/Bright Data onboarding
 │   │   ├── AgentUI.ts               # Terminal UI rendering, composer, and formatting
 │   │   └── TerminalState.ts         # Spinner coordination during interactive prompts
 │   ├── config/
 │   │   └── ConfigManager.ts         # Keytar vault and AES-256-GCM configuration storage
 │   ├── logger/
 │   │   └── AgentLogger.ts           # Sanitized, redacted terminal logger
-│   └── utils/
-│       └── ErrorTranslator.ts       # Structured error classifier and translator
+│   └── utils/                      # Error translation, cancellation, sanitization, state paths, leases
 ├── docker-compose.yaml              # Docker sandbox container definition
 ├── sandbox.Dockerfile               # Ubuntu-based sandbox environment configuration
 ├── tsconfig.json                    # Strict TypeScript configuration
@@ -704,12 +755,16 @@ When reporting a failure, share the redacted provider message and the failed sta
 - Verify Docker Compose availability: verify with `docker compose version`.
 - If permission errors occur on Linux, verify your user belongs to the `docker` usergroup (`sudo usermod -aG docker $USER`).
 
+### Verification reports unavailable
+
+Read the check's recorded detail before treating it as a code failure. Workspace snapshots require host `rg`; Docker, permissions, the selected executable, and project dependencies must also be available. The Docker CI job installs host ripgrep explicitly. Installing ripgrep only inside the container does not satisfy host snapshot discovery.
+
 ### Guardrail rejection errors
 - If input is blocked with `Potential secret detected`, ensure API keys or passwords are not pasted into the interactive chat. Use `rexa config set-key` or environment variables instead.
 - If input is blocked with `Input too long`, shorten the initial prompt and instruct the agent to inspect large files via `coding_context_tool`.
 
 ### Rate limiting or API quota exhaustion
-- REXA automatically detects HTTP 429 quota exhaustion. If this occurs, verify quota limits in Google AI Studio or supply a dedicated guardrail key via `GEMINI_GUARD_API_KEY`.
+- REXA classifies HTTP 429 failures. Check the relevant Gemini account's quota and billing. Normal startup passes the main key to guardrail constructors, so setting `GEMINI_GUARD_API_KEY` alone does not override that explicit key.
 
 ### Persistent memory authentication failure
 - Run `rexa login` to refresh the CLI authentication token.
@@ -725,7 +780,7 @@ To contribute or test modifications locally:
 # Run strict TypeScript compilation checks
 bun run typecheck
 
-# Run repository, planning, permissions, editing, process, and session tests
+# Run repository, planning, permissions, editing, sessions, and debugging/verification fixtures
 bun run test:core
 
 # Run web retrieval and mocked LinkedIn extraction tests (no live API calls)
@@ -748,6 +803,8 @@ bun run docker:build
 ```
 
 The stale-edit tests use temporary workspaces and mocked model responses, including an agent recovery flow that runs a real fixture test command. They do not evaluate a live model's reasoning. Passing fixtures cover their asserted scenarios, not every possible filesystem race or generated-code error. See [Developing Rexa](./DEVELOPMENT.md) for architecture, lifecycle rules, and readability conventions.
+
+Verification fixtures also use controlled model responses with real edits and Bun test execution; the Docker suite checks actual passing and failing command exit codes through the runner. These are different from a live-model evaluation. CI defines Linux/Windows type, core, web, and browser checks plus a Linux Docker job; the workflow definition alone does not establish its latest run passed.
 
 ---
 
