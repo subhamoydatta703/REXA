@@ -2,6 +2,8 @@
 
 Rexa runs TypeScript with Bun. Repository discovery and code search use ripgrep (`rg`). Approved sandbox commands run in Linux Docker containers; the process supervisor also runs TypeScript with Bun inside the container.
 
+This guide describes mechanisms present in the source. It does not certify the latest CI run or live-model performance. Package metadata currently reports `2.1.0`, while the CLI and banner still display `2.0.0`.
+
 ## The five priorities
 
 The user-facing workflow and commands are documented in the [README](./README.md#five-core-improvements). These are the implementation boundaries:
@@ -36,7 +38,7 @@ Research cancellation is checked before work and between calls, and forwarded to
 
 | Area              | Entry point                                                                           | Responsibility                                                                                                  |
 | ----------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Startup           | `src/index.ts`                                                                        | Configure providers, register tools, open session storage, and start the CLI.                                   |
+| Startup           | `src/index.ts`                                                                        | Authenticate, configure Gemini, register tools, enable sessions/verification, and start the CLI.               |
 | Terminal          | `src/cli/AgentCLI.ts`                                                                 | Read prompts, handle local commands, display output, and cancel a task with Ctrl+C.                             |
 | Local commands    | `src/cli/LocalCommands.ts`                                                            | Handle `/resume`, `/continue`, `/diff`, `/undo`, and process commands without sending them to the model.        |
 | Optional API setup | `src/cli/OptionalApiSetup.ts` | Explain optional providers, require explicit Y/N input, and request masked keys only after Y. |
@@ -52,6 +54,7 @@ Research cancellation is checked before work and between calls, and forwarded to
 | Recovery          | `src/sessions/SessionRecovery.ts`                                                     | Represent missing tool results as unknown outcomes without replaying calls.                                     |
 | Context           | `src/sessions/ContextManager.ts`                                                      | Summarize older context while retaining recent turns and original user requirements.                            |
 | Verification | `src/verification/VerificationWorkflow.ts`, `VerificationRunner.ts`, `VerificationResults.ts` | Coordinate debugging, execute checks, observe stability, and report evidence. |
+| Debugging agent | `src/agent/DebuggingAgent.ts` | Inspect connected source, prepare/reuse tests, investigate failures, and edit through the normal safety boundary. It submits commands for the runner rather than executing them directly. |
 | Shared utilities  | `src/utils/SanitizeStored.ts`, `src/utils/WorkspaceData.ts`, `src/utils/FileLease.ts` | Redact sensitive data, locate private project storage, and guard concurrent state writers.                      |
 
 The original exports of `sanitizeStored`, `recoverInterruptedMessages`, and `workspaceDataDirectory` remain available from their previous modules for compatibility. New production callers import these functions from their focused modules.
@@ -110,6 +113,28 @@ The runner defaults each check to 60 seconds and accepts at most 300 seconds, sh
 
 `tests/core/verification.test.ts` covers the three-file structure, preparation/repair decisions, real connected-feature test execution, unchanged tests after a source fix, persisted evidence, fresh resume, permissions, cancellation, budgets, and final-report invalidation. Model responses are controlled fixtures. The Docker suite separately exercises the real sandbox command boundary; these tests do not establish live-model debugging quality.
 
+`rexa.verify.json` is an optional project-root baseline configuration, not a generated test or proof of verification. Its schema is `{ "version": 1, "checks": [...] }`; each check has a unique name, executable, argument array, relative directory, and timeout. Without it, discovery considers existing `typecheck`, `lint`, `test:ci`, and `test:run` scripts with an identified package manager. It does not automatically select plain `test`. Task-specific tests are chosen by the debugging agent after inspecting the actual project.
+
+Snapshots execute repository discovery on the host before test dispatch. Missing host ripgrep can therefore make a Docker verification check `unavailable` before any container command runs. Initial and final snapshot failures preserve sanitized, bounded underlying diagnostics. Do not treat `unavailable` as an assertion failure or fix it by weakening permissions. There is no `execute` permission effect: command tools use `command`.
+
+## Current provider boundary and planned Cosmos work
+
+Startup currently requires REXA account authentication and a Gemini key, then constructs `GeminiProvider`, a Google-backed supervisor, and Google-backed guardrails. The main adapter hardcodes its model. `GeminiConfig.ts` and `GeminiStreaming.ts` do not provide active CLI model or reasoning selection.
+
+`LLMProvider` abstracts generation, but `Message.ts` and `LLMResponse.ts` still import Google's `Part`. The main, research, debugging, and recovery paths build Gemini-style call/result parts. Shared `ToolCall` currently has a name and parameters without a provider-independent call ID. Multiple providers need explicit protocol translation and correlation of repeated tool names, not just another SDK client.
+
+OpenAI and Anthropic adapters, provider-aware credentials, `/provider`, `/model`, `/reasoning`, a reasoning submenu, and session selection metadata are planned. They are not implemented commands or dependencies. The first planned version uses one validated provider/model/effort selection throughout each task; all model-backed paths, including supervision, guardrails, reflection, and compaction, must follow it. Switching must preserve complete tool cycles and exclude incompatible native continuation data.
+
+Model strings in source are not an availability catalog. Future menus need verified API identifiers, model-specific supported reasoning settings, defaults, and clear handling of account-access errors. Reasoning effort is not a measurement of intelligence or a correctness guarantee.
+
+When wiring configuration, preserve actual precedence: guardrail constructors prefer an explicitly passed key over `GEMINI_GUARD_API_KEY`, and normal CLI startup passes the main key. Likewise, `ExecutionManager` supplies `REXA_WORKSPACE` from its constructor workspace; the environment variable is not currently a CLI workspace override.
+
+## Local state and remote memory
+
+`SessionStore`, checkpoints, and permission rules use private workspace-scoped files under `~/.rexa/workspaces/<workspace-id>`. `MemoryTools.ts` separately sends authenticated HTTP requests to REXA's save/search endpoints. The CLI source does not establish whether the remote server uses vector search, graph storage, PostgreSQL, or another backend.
+
+Memory descriptions instruct the model to save only explicitly requested preferences. The client enforces authentication, permissions, nonempty text, and an 8,192-character limit; that is not a semantic validator against every secret or conversation dump. Avoid documenting model instructions as unconditional runtime enforcement.
+
 ## Stale-edit recovery
 
 `EditConflictError.ts` supplies structured conflict results. `StaleEditRecovery.ts` tracks recovery for one `Agent.run()`; the editor receives that state through `ToolExecutionContext`. No failed operation is automatically replayed.
@@ -146,6 +171,16 @@ git diff --check
 ```
 
 Core tests exercise repository reads, permissions, editing, processes, planning, and sessions. Web tests use fixtures and mocked providers. Browser tests require the installed Chromium runtime. Docker tests require a running Docker daemon and build the sandbox image; the command fixtures include Python programs to check child-process cleanup and stdin.
+
+Core and Docker verification tests also need host ripgrep. The Docker CI job installs it explicitly before running the lifecycle suite. `tests/core/verification.test.ts` includes a missing-host-ripgrep regression that checks the diagnostic and verifies command dispatch never begins.
+
+For browser fixtures, install the runtime used by CI when needed:
+
+```sh
+bunx playwright install --with-deps chromium --only-shell
+```
+
+CI currently uses Bun `1.4.2`, with type, web, core, and browser checks on Linux and Windows, and a separate Linux Docker job. Live public-page retrieval is opt-in via `bun run test:web:live`; it does not evaluate a model's research or repair quality. Record actual commands and outcomes rather than assuming a workflow definition or historical count means current tests passed.
 
 `tests/core/optional-api-setup.test.ts` uses injected prompts and storage to cover strict Y/N validation, skip/entry decisions, independent provider state, cancellation, missing input, failure reporting, and noninteractive behavior. An isolated subprocess with a temporary home and mocked OS vault exercises real encrypted config persistence, environment precedence, and rejected saves without touching developer credentials or paid APIs.
 
