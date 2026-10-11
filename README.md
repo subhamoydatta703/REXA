@@ -35,6 +35,7 @@
 - [Five core improvements](#five-core-improvements)
 - [Sessions and local commands](#sessions-and-local-commands)
 - [Editing and conflict recovery](#editing-and-conflict-recovery)
+- [Automatic verification and repair](#automatic-verification-and-repair)
 - [Interactive terminal experience](#interactive-terminal-experience)
 - [Available tools](#available-tools)
 - [Docker sandbox environment](#docker-sandbox-environment)
@@ -247,6 +248,64 @@ Rereading and successful recoveries do not reset the per-file recovery budget. A
 Cancellation stops recovery and attempts rollback if writing has started. Rollback and undo check current contents before restoring eligible files; they can refuse restoration rather than overwrite a conflicting change. Command checkpoints cover eligible project text files, not every command effect: ignored files, credentials, binaries, Git history, network effects, and private `/workspace` clones are outside that scope.
 
 Fresh-read requirements and retry limits are enforced by code. Whether a revised edit is logically correct and whether its tests are adequate still depend on reasoning and verification. Approved commands remain outside this file-edit guard.
+
+## Automatic verification and repair
+
+In act mode, Rexa hands coding work to a debugging agent before accepting completion. The debugging agent inspects the implementation and existing test framework, creates or reuses behavior-focused tests, and submits commands for the application to execute. If tests fail, it investigates the recorded failures and can repair the implementation. Every repair is followed by another run against the current code. Plan mode does not start this workflow. Research-only routes do not use it; documentation-only edits and unchanged conversations normally skip feature testing.
+
+```text
+Implement feature → prepare relevant tests → run tests
+                                             ↓
+                              investigate failure and repair
+                                             ↓
+                                      rerun fixed code
+                                             ↓
+                                assess results and report
+```
+
+The verification directory contains three modules: `VerificationWorkflow.ts` coordinates stages and repair decisions; `VerificationRunner.ts` executes checks and observes workspace stability; `VerificationResults.ts` defines evidence and builds the report. `src/agent/DebuggingAgent.ts` performs repository inspection and editing. It has read/edit tools, not direct command, deployment, Git, or external-service tools. Commands proposed by it still pass through the normal command permission boundary. The agents edit sequentially.
+
+No separate configuration file is required for task-specific testing. To supply optional baseline commands, configure a project-root `rexa.verify.json`:
+
+```json
+{
+  "version": 1,
+  "checks": [
+    {
+      "name": "Type check",
+      "command": "bun",
+      "args": ["run", "typecheck"],
+      "directory": ".",
+      "timeoutMs": 60000
+    },
+    {
+      "name": "Unit tests",
+      "command": "bun",
+      "args": ["test", "tests/unit"],
+      "directory": ".",
+      "timeoutMs": 60000
+    }
+  ]
+}
+```
+
+This is an example, not a claim that every project has these scripts or directories. Use commands appropriate to your project. Check names must be unique. Up to ten checks are supported, with a maximum five-minute timeout per check. Directories are relative project directories, mapped to `/app` inside Docker. Every check uses the normal command permission system; dependencies and executables must already be available in that environment.
+
+Without explicit configuration, baseline discovery uses `packageManager` or unambiguous lockfiles and selects existing `typecheck`, `lint`, `test:ci`, and `test:run` scripts. It skips discovered scripts containing watch or `--fix` options and does not automatically select plain `test`. The debugging agent can inspect the actual setup and select an appropriate finite test invocation. Invalid baseline configuration is reported. Missing frameworks or dependencies require a setup decision; the debugging agent cannot install them through a shell bypass.
+
+The workflow requires recorded behavior coverage, existing test-file paths, and selected command names before running checks. It preserves discovered baseline commands alongside selected feature checks. The model chooses relevant coverage; file existence and command execution alone do not prove that a test exercises the intended behavior. Commands run sequentially. Baseline failures, denied checks, missing executables, timeouts, cancellation, and unstable results are recorded separately. Check execution shares a ten-minute accumulated command/approval-time budget per user task; exhausted budgets prevent scheduling additional checks.
+
+Rexa can request up to **two automatic repair rounds**. A newly selected feature test can trigger repair without a previous passing baseline. Checks that already failed at baseline are kept separate; if those are the only failures, automatic repair stops. Debugging shares at most 30 model steps across preparation and repairs, limited further by the main agent's remaining step allowance. Instructions limit changes to the original request and preserve unrelated work. Normal permissions, stale-file checks, and checkpoints apply. A permission or recovery limit stops debugging. The repair budget is separate from stale-edit recovery limits.
+
+Failures retain bounded original output and recognized file/line references where available. Assertion locations are clues, not confirmed implementation causes. Investigation findings are labeled as agent-authored. Selected commands and declared coverage stay fixed during repair. Changes to listed test files require an explanation; this requirement cannot mechanically prove that a revised test is correct or has not been weakened.
+
+Denied, timed-out, cancelled, unavailable, or invalidated checks prevent automatic repair, even if another check reveals a new failure.
+
+Verification stages, debugging messages, findings, and command outcomes are saved with sessions, including in-flight checks whose outcomes are not yet known. Resume retains historical evidence and requests fresh checks when the coding agent next runs in act mode; it does not replay interrupted calls. A deterministic summary accompanies the final answer. Blocked verification replaces an unverified completion claim with an incomplete-verification message and recorded results.
+
+Source snapshots compare discovered, nonprotected, nonignored text files before and after checks, and again before the final report. Changes or owned unfinished background processes invalidate conclusive results. Snapshot limits are 2 MB per discovered file and 32 MB total; unsupported or inaccessible snapshots make verification unavailable. Binary content and ignored/protected files are outside the observed text scope. These observations are not an OS lock and cannot exclude every filesystem race or external effect.
+
+Passing checks establish only what the selected commands test. A check failing both before and after changes does not prove that Rexa introduced no additional errors. Repair reasoning, test adequacy, and preservation of intent still require review; instructions against weakening checks are not a semantic guarantee.
 
 ---
 

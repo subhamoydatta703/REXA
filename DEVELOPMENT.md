@@ -51,6 +51,7 @@ Research cancellation is checked before work and between calls, and forwarded to
 | Sessions          | `src/sessions/SessionStore.ts`                                                        | Append and load versioned transcript snapshots for a workspace.                                                 |
 | Recovery          | `src/sessions/SessionRecovery.ts`                                                     | Represent missing tool results as unknown outcomes without replaying calls.                                     |
 | Context           | `src/sessions/ContextManager.ts`                                                      | Summarize older context while retaining recent turns and original user requirements.                            |
+| Verification | `src/verification/VerificationWorkflow.ts`, `VerificationRunner.ts`, `VerificationResults.ts` | Coordinate debugging, execute checks, observe stability, and report evidence. |
 | Shared utilities  | `src/utils/SanitizeStored.ts`, `src/utils/WorkspaceData.ts`, `src/utils/FileLease.ts` | Redact sensitive data, locate private project storage, and guard concurrent state writers.                      |
 
 The original exports of `sanitizeStored`, `recoverInterruptedMessages`, and `workspaceDataDirectory` remain available from their previous modules for compatibility. New production callers import these functions from their focused modules.
@@ -83,6 +84,31 @@ The shared `Tool` interface accepts different argument and result shapes, so it 
 - Await final-response validation and session persistence inside the agent's `try` block so errors reach its interruption handler and cleanup follows validation.
 - Sanitize complete output lines before streaming them; a credential may span several incoming chunks. Retained output has a separate size limit.
 - File-tool path restrictions are not an operating-system sandbox. An approved Docker command can access the mounted project files.
+
+## Automatic verification architecture
+
+`src/index.ts` enables verification on the coding agent with its active workspace. Programmatic `Agent` instances opt in through `enableVerification(workspace)`, keeping test fixtures and other embeddings explicit. Plan mode never creates an active verification task.
+
+| Module | Responsibility |
+| --- | --- |
+| `VerificationWorkflow.ts` | Coordinate preparation, execution, investigation, repair, and completion. Validate coverage references and test-file existence, preserve baseline commands, and bound repair rounds. |
+| `VerificationRunner.ts` | Discover optional baseline commands, validate selected commands, execute through `ToolDispatcher`, capture bounded output and reported locations, and compare workspace fingerprints. |
+| `VerificationResults.ts` | Define check, submission, coverage, and session-evidence schemas; build a sanitized deterministic report. |
+| `../agent/DebuggingAgent.ts` | A separate bounded model loop for inspecting source, creating/reusing tests, and repairing failures. Only repository read tools, `code_tool`, and `submit_debugging` are available. |
+
+Baseline evidence is recorded before appending the main model's modifying tool-call turn. If the debugging agent makes the first edit, its before-edit callback establishes the baseline. Provider raw parts and call/result ordering are retained. Commands execute through the runner's dispatcher, preventing recursive verification. Mutating failures conservatively require testing; rejected mutations stop debugging rather than authorizing a bypass.
+
+Before accepting a coding completion, `Agent` creates a `DebuggingAgent` and calls `workflow.finish()`. Mutations, resumed tasks, or explicit coding/test request words trigger the workflow; unchanged conversations and reported documentation-only edits normally skip it. This request-word detection is a heuristic. The debugging agent must submit structured coverage, commands, findings, and any blocker through `submit_debugging`; prose success cannot complete the workflow. The application checks that referenced tests exist and commands are valid, but coverage adequacy remains a model judgment.
+
+Feature checks can trigger repair without a passing baseline. A command already failed at baseline is not automatically treated as a new regression. Baseline checks remain selected, and commands/coverage cannot change during repair. Listed test-file fingerprints detect revisions, which require an explanation. This is an accountability mechanism, not semantic proof against weak tests. Each repair is followed by fresh execution, even when no successful edit was reported. There are at most two repair rounds and 30 debugging model steps shared across phases, further capped by the main loop's remaining allowance. Both agents share the task's `StaleEditRecovery` state and edit sequentially.
+
+The session stores stages, bounded debugging exchanges, findings, and evidence before dispatching each check and after it returns. A crash can leave an unknown outcome. New tasks create fresh workflow state; old evidence fields are optional for session compatibility. Debugging history is not replayed or recursively embedded in new handoffs. Verification evidence messages are excluded from original-user-requirement anchors during compaction.
+
+Final response validation finishes before one more workspace stability check and the deterministic report. Concurrent changes invalidate earlier pass/fail conclusions. This is bounded observation, not an atomic filesystem lock. Snapshots follow repository ignore/protected-path rules, omit binary contents, reject discovered files larger than 2,000,000 bytes, and stop above a 32,000,000-byte aggregate. Out-of-scope or external command effects cannot be certified by this mechanism.
+
+The runner defaults each check to 60 seconds and accepts at most 300 seconds, sharing a 600-second accumulated command/approval-time budget. It saves up to 8,000 sanitized characters for each output stream per check and extracts at most 30 recognizable source locations. It does not universally parse per-test counts, assertion fields, or root causes; original bounded output remains the evidence. Debugging tool responses are bounded to 24,000 characters and model context to 160,000 characters before generation. Investigation text is model-authored, distinct from recorded command outcomes.
+
+`tests/core/verification.test.ts` covers the three-file structure, preparation/repair decisions, real connected-feature test execution, unchanged tests after a source fix, persisted evidence, fresh resume, permissions, cancellation, budgets, and final-report invalidation. Model responses are controlled fixtures. The Docker suite separately exercises the real sandbox command boundary; these tests do not establish live-model debugging quality.
 
 ## Stale-edit recovery
 
@@ -128,5 +154,7 @@ Docker lifecycle tests mount a disposable temporary workspace. On Linux, `mkdtem
 `tests/core/stale-edit.test.ts` covers fresh-read enforcement, explicit-hash checks, retry budgets, alias paths, batch prevalidation, rollback conflicts, cancellation, and agent/session integration. Its agent uses mocked model responses. One recovery scenario runs a real Bun fixture test after a revised edit. These tests verify recovery mechanics; they do not establish live-model coding quality or guarantee semantic preservation of every user change.
 
 `tests/web/research-controls.test.ts` covers denied supplied/model URLs, schema validation, cancellation before and during research, and retrieval fallback cancellation. Transport fixtures exercise cancellation during DNS and a real local HTTP body. Browser fixtures include cancellation during a real Chromium retrieval. Provider/model behavior is mocked; these checks do not call paid APIs or establish live research-answer quality.
+
+`tests/core/verification.test.ts` covers configuration, discovery, permission denial, outcome classification, budgets, stability invalidation, bounded repairs, cancellation persistence, plan restrictions, and session refresh. Its end-to-end agent fixture uses mocked model responses with real Bun tests and the real editor. `tests/docker/lifecycle.test.ts` additionally checks the verification runner through the real Docker command tool with passing and failing Python fixtures. These tests verify mechanics; they do not establish live-model repair quality.
 
 Review the source as well as the tests: confirm that the main path reads in execution order, failure paths are visible, and a helper's name explains why its caller needs it. A passing suite verifies the covered behavior; it does not prove every possible behavior is unchanged.
