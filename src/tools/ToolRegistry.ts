@@ -1,15 +1,24 @@
 import { z } from "zod";
+import type { StaleEditRecovery } from "./StaleEditRecovery";
+export interface ToolExecutionContext {
+    approved?: boolean;
+    signal?: AbortSignal;
+    onOutput?: (text: string, stream: "stdout" | "stderr") => void;
+    editRecovery?: StaleEditRecovery;
+}
 
-export interface Tool{
+export interface Tool {
     name: string;
+    effect?: "read" | "web" | "edit" | "command" | "external";
     description: string;
     IMPORTANT?: string;
     parameters: z.ZodSchema;
-    execute: (args: any) => Promise<any>;
+    // Each registered tool has its own schema and argument type. The dispatcher
+    // validates arguments before crossing this shared execution boundary.
+    execute: (args: any, context?: ToolExecutionContext) => Promise<any>;
 }
 
-
-export class ToolRegistry{
+export class ToolRegistry {
     private tools: Tool[] = [];
 
     registerTool(tool: Tool) {
@@ -19,12 +28,11 @@ export class ToolRegistry{
     getAllTools(): Tool[] {
         return this.tools;
     }
-    
+
     getTool(toolName: string): Tool | undefined {
-        return this.tools.find(tool => tool.name === toolName);
+        return this.tools.find((tool) => tool.name === toolName);
     }
 }
-
 
 export interface ToolCall {
     name: string;

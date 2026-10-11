@@ -1,13 +1,12 @@
 import type { Part } from "@google/genai";
 
 export interface Message {
-    agentName?: string
+    agentName?: string;
     runID?: string;
     role: "user" | "model" | "assistant" | "tool";
     content?: string;
     parts?: Part[];
 }
-
 
 export interface ResearchMessage {
     agentName?: string;
@@ -16,7 +15,3 @@ export interface ResearchMessage {
     content?: string;
     parts?: Part[];
 }
-
-
-
-

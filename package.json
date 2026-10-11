@@ -1,109 +1,111 @@
 {
-  "name": "rexa-agent",
-  "version": "2.0.2",
-  "description": "Autonomous terminal agent harness engineered to understand software tasks, conduct web research, reflect on tool plans, safely modify codebases with automated verification, execute commands in Docker, enforce safety guardrails with secret scanning, and retain user preferences.",
-  "main": "src/index.ts",
-  "module": "src/index.ts",
-  "type": "module",
-  "license": "MIT",
-  "author": "Subhamoy Datta",
-  "publishConfig": {
-    "access": "public"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/subhamoydatta703/REXA.git"
-  },
-  "homepage": "https://github.com/subhamoydatta703/REXA#readme",
-  "bugs": {
-    "url": "https://github.com/subhamoydatta703/REXA/issues"
-  },
-  "keywords": [
-    "ai-agent",
-    "cli",
-    "gemini",
-    "autonomous-coding",
-    "agent-harness",
-    "multi-agent",
-    "orchestrator",
-    "research-agent",
-    "coding-agent",
-    "guardrails",
-    "secret-scanning",
-    "sandboxing",
-    "docker",
-    "bun",
-    "developer-tools",
-    "rexa"
-  ],
-  "engines": {
-    "bun": ">=1.1",
-    "node": ">=18"
-  },
-  "files": [
-    "src/",
-    "assets/",
-    "LICENSE",
-    "README.md",
-    "package.json",
-    "tsconfig.json",
-    "docker-compose.yaml",
-    "sandbox.Dockerfile"
-  ],
-  "scripts": {
-    "test:web": "bun test ./tests/web",
-    "test:web:browser": "bun test ./tests/browser",
-    "test:web:live": "bun run ./tests/web/smoke.ts",
-    "typecheck": "bun x tsc --noEmit -p tsconfig.json",
-    "prepublishOnly": "bun x tsc --noEmit -p tsconfig.json",
-    "docker:up": "docker compose up -d",
-    "docker:down": "docker compose down",
-    "docker:build": "docker compose build",
-    "rexa": "bun run src/index.ts",
-    "postinstall": "prisma skills sync || exit 0",
-    "contract:emit": "prisma contract emit"
-  },
-  "bin": {
-    "rexa": "src/index.ts"
-  },
-  "devDependencies": {
-    "@prisma/cli-engine": "0.2.3",
-    "@types/bun": "latest",
-    "@types/figlet": "^1.7.0",
-    "@types/gradient-string": "^1.1.6",
-    "@types/node": "^26.4.1",
-    "@types/pg": "^8.23.1",
-    "@types/react": "^19.2.18",
-    "prisma": "7.10.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "@google/genai": "^2.15.0",
-    "@inquirer/prompts": "^8.7.0",
-    "@mozilla/readability": "^0.6.0",
-    "@prisma/adapter-pg": "^7.10.0",
-    "@prisma/client": "7.10.0",
-    "@prisma/orm-postgres": "^8.0.0-rc.8",
-    "@tavily/core": "^0.7.7",
-    "chalk": "^6.0.0",
-    "cli-highlight": "^2.1.11",
-    "commander": "^15.0.0",
-    "dotenv": "^17.4.2",
-    "figlet": "^1.11.4",
-    "gradient-string": "^3.0.0",
-    "ink": "^7.1.1",
-    "keytar": "^7.9.0",
-    "linkedom": "^0.18.13",
-    "marked": "^18.0.11",
-    "marked-terminal": "^7.3.0",
-    "ora": "^9.4.1",
-    "pg": "^8.23.0",
-    "playwright": "^1.64.0",
-    "react": "^19.2.8",
-    "replace-in-file": "^9.0.0",
-    "winston": "^3.19.0",
-    "zod": "^4.4.3"
-  }
+    "name": "rexa-agent",
+    "version": "2.0.2",
+    "description": "Autonomous terminal agent harness engineered to understand software tasks, conduct web research, reflect on tool plans, safely modify codebases with automated verification, execute commands in Docker, enforce safety guardrails with secret scanning, and retain user preferences.",
+    "main": "src/index.ts",
+    "module": "src/index.ts",
+    "type": "module",
+    "license": "MIT",
+    "author": "Subhamoy Datta",
+    "publishConfig": {
+        "access": "public"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/subhamoydatta703/REXA.git"
+    },
+    "homepage": "https://github.com/subhamoydatta703/REXA#readme",
+    "bugs": {
+        "url": "https://github.com/subhamoydatta703/REXA/issues"
+    },
+    "keywords": [
+        "ai-agent",
+        "cli",
+        "gemini",
+        "autonomous-coding",
+        "agent-harness",
+        "multi-agent",
+        "orchestrator",
+        "research-agent",
+        "coding-agent",
+        "guardrails",
+        "secret-scanning",
+        "sandboxing",
+        "docker",
+        "bun",
+        "developer-tools",
+        "rexa"
+    ],
+    "engines": {
+        "bun": ">=1.1",
+        "node": ">=18"
+    },
+    "files": [
+        "src/",
+        "assets/",
+        "LICENSE",
+        "README.md",
+        "package.json",
+        "tsconfig.json",
+        "docker-compose.yaml",
+        "sandbox.Dockerfile"
+    ],
+    "scripts": {
+        "test:core": "bun test ./tests/core",
+        "test:docker": "bun test ./tests/docker",
+        "test:web": "bun test ./tests/web",
+        "test:web:browser": "bun test ./tests/browser",
+        "test:web:live": "bun run ./tests/web/smoke.ts",
+        "typecheck": "bun x tsc --noEmit -p tsconfig.json",
+        "prepublishOnly": "bun x tsc --noEmit -p tsconfig.json",
+        "docker:up": "docker compose up -d",
+        "docker:down": "docker compose down",
+        "docker:build": "docker compose build",
+        "rexa": "bun run src/index.ts",
+        "postinstall": "prisma skills sync || exit 0",
+        "contract:emit": "prisma contract emit"
+    },
+    "bin": {
+        "rexa": "src/index.ts"
+    },
+    "devDependencies": {
+        "@prisma/cli-engine": "0.2.3",
+        "@types/bun": "latest",
+        "@types/figlet": "^1.7.0",
+        "@types/gradient-string": "^1.1.6",
+        "@types/node": "^26.4.1",
+        "@types/pg": "^8.23.1",
+        "@types/react": "^19.2.18",
+        "prisma": "7.10.0"
+    },
+    "peerDependencies": {
+        "typescript": "^5"
+    },
+    "dependencies": {
+        "@google/genai": "^2.15.0",
+        "@inquirer/prompts": "^8.7.0",
+        "@mozilla/readability": "^0.6.0",
+        "@prisma/adapter-pg": "^7.10.0",
+        "@prisma/client": "7.10.0",
+        "@prisma/orm-postgres": "^8.0.0-rc.8",
+        "@tavily/core": "^0.7.7",
+        "chalk": "^6.0.0",
+        "cli-highlight": "^2.1.11",
+        "commander": "^15.0.0",
+        "dotenv": "^17.4.2",
+        "figlet": "^1.11.4",
+        "gradient-string": "^3.0.0",
+        "ink": "^7.1.1",
+        "keytar": "^7.9.0",
+        "linkedom": "^0.18.13",
+        "marked": "^18.0.11",
+        "marked-terminal": "^7.3.0",
+        "ora": "^9.4.1",
+        "pg": "^8.23.0",
+        "playwright": "^1.64.0",
+        "react": "^19.2.8",
+        "replace-in-file": "^9.0.0",
+        "winston": "^3.19.0",
+        "zod": "^4.4.3"
+    }
 }

@@ -1,16 +1,16 @@
+import type { Part } from "@google/genai";
 import { type ToolCall } from "../tools/ToolRegistry";
 
 export interface LLMResponse {
     role: string;
     text: string;
-    rawParts?: any[];
+    rawParts?: Part[];
     toolcalls?: ToolCall[];
-     error?: {
+    error?: {
         type: string;
         message: string;
     };
 }
-
 
 export interface GeminiRawJsonError {
     error: {
@@ -19,8 +19,6 @@ export interface GeminiRawJsonError {
         status: string;
     };
 }
-
-
 
 export interface SupervisorDecision {
     route: "DIRECT" | "CODE_ONLY" | "RESEARCH_ONLY" | "RESEARCH_AND_CODE";

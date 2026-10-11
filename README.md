@@ -32,6 +32,9 @@
   - [Research agent](#research-agent)
   - [Coding agent](#coding-agent)
 - [Execution modes](#execution-modes)
+- [Five core improvements](#five-core-improvements)
+- [Sessions and local commands](#sessions-and-local-commands)
+- [Editing and conflict recovery](#editing-and-conflict-recovery)
 - [Interactive terminal experience](#interactive-terminal-experience)
 - [Available tools](#available-tools)
 - [Docker sandbox environment](#docker-sandbox-environment)
@@ -55,8 +58,8 @@ Modern software development requires balancing autonomous execution with safety 
 
 1. **Intelligent multi-agent routing**: Tasks are classified dynamically into direct conversational responses, local repository coding tasks, or combined research-and-code workflows.
 2. **Autonomous web research**: External documentation, release notes, and third-party APIs are researched prior to code modification without modifying local files.
-3. **Plan reflection**: Planned tool calls undergo autonomous reflection using the Gemini LLM model to validate efficacy and eliminate redundant or hallucinated actions before execution.
-4. **Sandboxed execution**: Command execution and external dependency operations are isolated inside a dedicated Docker container with strict CPU, memory, PID, and permission boundaries.
+3. **Plan reflection**: Proposed tool calls undergo a separate Gemini review before execution. This can identify mistakes or redundant actions, but does not guarantee their elimination.
+4. **Sandboxed execution**: `execute_command` runs inside Docker with CPU, memory, and PID limits. The separate `git_command` tool runs `/app` Git operations on the host; permissions apply to both tools.
 5. **Dual guardrail validation**: Every user input and agent response is evaluated independently by specialized guardrail evaluators powered by the Gemini LLM model and Shannon entropy secret scanning.
 6. **Explicit persistent memory**: Cross-session user preferences and development rules are stored securely through authenticated endpoints.
 
@@ -64,7 +67,7 @@ Modern software development requires balancing autonomous execution with safety 
 
 ## How REXA works
 
-When a prompt is submitted to REXA, execution proceeds through a deterministic, verified pipeline:
+When a prompt is submitted to REXA, orchestration selects a workflow and applies guardrail and tool checks. Model decisions and generated code still require verification:
 
 ```text
 User Input
@@ -119,7 +122,7 @@ Terminal Interface (AgentCLI & AgentUI)
         │
         └── Agent / Coding Agent (src/agent/Agent.ts)
               ├── Plan Reflection Layer (Gemini LLM model)
-              ├── ToolRegistry (9 Registered Tools)
+              ├── ToolRegistry & ToolDispatcher (mode, schema, permission checks)
               ├── ExecutionManager & Docker Sandbox
               └── OutputGuardrails (src/guardrails/output/OutputGuardrails.ts)
 ```
@@ -154,16 +157,18 @@ Defined in `src/agent/ResearchAgent.ts`, this agent acts as an autonomous extern
 
 - **Strict boundaries**: The research agent is strictly read-only and external. It cannot write files, delete code, execute shell commands, or modify Git state.
 - **Tools**: Only `search` and `read_url`, with an allowlist enforced when executing calls.
+- **Execution checks**: Both supplied-URL reads and model-requested tool calls pass through `ToolDispatcher` for argument validation and permission checks. A denied supplied URL stops that research request; denied model tool calls are returned as rejected results.
+- **Cancellation**: The research loop checks cancellation and passes the signal to model generation and web retrieval, including HTTP, browser, Tavily, and LinkedIn operations. Cancelling prevents later research calls and fallback requests. A Bright Data collection already submitted may continue remotely; cancelling local polling does not cancel that provider job.
 - **Workflow**: Reads up to three supplied URLs before asking the model to answer. Each request starts with fresh evidence. Failed retrieval of every supplied URL returns an explicit limitation rather than an invented page summary.
 - **Output**: Information-only requests return the research answer directly. Implementation requests pass research to the coding agent as untrusted source data, bounded to 40,000 characters.
 
 ### Coding agent
 Defined in `src/agent/Agent.ts`, this agent serves as the autonomous software engineer.
 
-- **Context gathering**: Maps repository layout via `get_project_tree` and reads file slices via `coding_context_tool`.
-- **Pre-execution reflection**: Before executing any batch of proposed tool calls, submits the plan to a reflection prompt powered by the Gemini LLM model. Hallucinated file paths or unproductive actions are rejected and revised before execution.
-- **Verified file manipulation**: Uses `code_tool` to apply atomic additions, replacements, or deletions. Every file update re-reads the underlying file to guarantee valid disk state.
-- **Iterative feedback**: Executes tests and builds via `execute_command` inside the Docker sandbox, observes stdout/stderr, and self-corrects until verification succeeds.
+- **Context gathering**: Discovers files with `glob_files`, searches with `search_code`, and reads numbered source ranges with `read_file`. Compatibility tools remain available.
+- **Pre-execution reflection**: Uses a separate model pass to review proposed tool calls. Reflection can miss mistakes; execution also checks mode, argument schemas, permissions, and tool-specific constraints.
+- **File manipulation**: Uses `code_tool` for creates, writes, targeted edits, and deletes, with whole-file hash checks, batch validation, and checkpoints. Multi-file writes are not an operating-system atomic transaction.
+- **Iterative feedback**: Can run tests and builds via `execute_command`, inspect results, and revise changes within the step limit. Test selection and solution correctness still depend on the model and the available checks.
 
 ---
 
@@ -173,8 +178,75 @@ REXA supports two operational modes toggled interactively with the `Tab` key:
 
 | Mode | Key behavior | Tool availability | Best used for |
 | :--- | :--- | :--- | :--- |
-| **Plan** | Analyzes context and outlines architectural solutions, affected files, risks, and testing strategies without executing mutations. External research is described conceptually rather than executed. | Disabled (`tools: []`) | Architectural design, feasibility assessments, task decomposition, and code reviews. |
-| **Act** | Reads websites, researches questions, or executes coding actions according to the request. | Fully enabled (9 registered tools; research uses only web tools) | Website inspection, research, implementation, bug fixing, and test running. |
+| **Plan** | Inspects the repository and public sources, then proposes steps, affected areas, risks, and verification. | Only tools marked `read` or `web`; edit, command, external, and unclassified tools are blocked. | Investigation, architectural design, planning, and code reviews. |
+| **Act** | Investigates and implements according to the request. | Registered tools, subject to permission and tool-specific checks. | Research, implementation, bug fixing, and test running. |
+
+`ToolDispatcher` filters the model's available tools and checks availability again during execution. Plan mode blocks command tools, including test commands; it uses dedicated reading and search tools for investigation. The CLI starts in act mode unless a resumed session restores plan mode.
+
+Plan mode and the research agent reuse the same `search` and `read_url` implementations. Plan mode runs in the main agent, which can combine project inspection with public documentation. The separate research agent has only those two web tools and cannot inspect local project files. The two tool categories allowed in plan mode (`read` and `web`) do not mean it has only two tools.
+
+For example, planning an authentication change can involve reading local routes and checking public authentication documentation in the main agent. In act mode, a research-only request can use the separate research agent; a research-and-code request gathers research before handing findings to the coding agent.
+
+## Five core improvements
+
+| Priority | Implementation | Practical benefit |
+| :--- | :--- | :--- |
+| 1. Project understanding | Ignore-aware file discovery, literal or regex code search, bounded numbered reads, and workspace path checks. | Gather relevant code with explicit paths and line numbers before editing. |
+| 2. Enforced planning | Read/web tool allowlist enforced at dispatch. | Review a proposed approach while editing and command tools are unavailable. |
+| 3. Controlled editing | Hash checks, batch validation, checkpoints, undo, and stale-file recovery. | Detect unseen changes and avoid blindly replaying outdated edits. |
+| 4. Conversation continuity | Workspace-scoped sessions, resume commands, interruption handling, and context compaction. | Return to saved context without automatically replaying interrupted tool calls. |
+| 5. Permissions and processes | Configurable approval rules, Docker commands, process handles, timeouts, cancellation, and child-process cleanup. | Review operations and manage running commands. |
+
+These are implemented mechanisms, not evidence of parity with another coding agent. Real-task success, adequate testing, and preservation of user intent still need evaluation.
+
+## Sessions and local commands
+
+Start in the project directory. Conversations are stored locally under `~/.rexa/workspaces/<workspace-id>/sessions`, where the workspace ID is derived from the absolute project path. This is separate from authenticated cloud preference memory.
+
+```bash
+rexa --continue
+rexa --resume <session-id>
+```
+
+Inside the terminal, local commands are handled without sending the command itself to the model. `/compact` does make a model request to summarize older context.
+
+| Command | Behavior |
+| :--- | :--- |
+| `/continue` | Resume the latest saved conversation for this workspace. |
+| `/resume` or `/resume-chat [id]` | Choose a saved conversation, or resume the supplied ID. |
+| `/new` | Start a new conversation in act mode and clear session permission grants. |
+| `/compact` | Summarize older context while retaining recent turns and original user requests. |
+| `/diff` | Show the latest checkpoint diff. |
+| `/undo [checkpoint-id]` | Ask before restoring an eligible checkpoint; conflicting current edits prevent restoration. |
+| `/permissions` | Display defaults, configured rules, and the session grant count. |
+| `/ps` | List processes tracked by the sandbox process manager. |
+| `/stop [process-id]` | Stop one tracked process, or all owned sandbox processes when no ID is supplied. |
+| `/help` | Show available local commands. |
+
+An interrupted tool call with no recorded result has an unknown outcome. Resume records that uncertainty instead of replaying the call. Check the workspace before continuing. Process handles do not survive a Rexa restart.
+
+Automatic compaction uses a character budget, not an exact model token count. Summaries can omit details. If compaction fails or cannot reduce the context enough, Rexa retains the original history and reports the failure.
+
+## Editing and conflict recovery
+
+`read_file` returns numbered text and a SHA-256 hash of the entire file. The hash identifies the observed contents; it is not a backup and does not determine whether code is correct. Even a partial read hashes the whole eligible file. Internally, the reader loads the entire file before selecting output lines. It rejects directories, files larger than 2,000,000 bytes, and files containing a NUL byte as likely binary content. Default output is up to 200 lines within a 32,000-byte budget.
+
+For existing-file operations, `code_tool` checks an explicit `expected_hash` or the hash remembered by the workspace reader. Every batch is prepared and validated before writing, and contents are rechecked during writes. Checkpoints retain before/after text for eligible changes.
+
+For example, Rexa reads `const count = 1;`, then you add a comment. Its outdated edit is rejected. It must read the latest contents before preparing another edit; model instructions require reconsidering the original request and preserving unrelated changes.
+
+| Conflict code | Meaning |
+| :--- | :--- |
+| `STALE_FILE` | The file changed compared with the expected contents. |
+| `FRESH_READ_REQUIRED` | Recovery needs a newer nonempty read; an explicit hash alone cannot bypass it. |
+| `STALE_RETRY_LIMIT` | The file has used its two recovery edit attempts in this user task. |
+| `RECOVERY_CONFLICT` | Recovery or rollback could not safely finish; further `code_tool` edits are blocked for the task and the checkpoint is retained. |
+
+Rereading and successful recoveries do not reset the per-file recovery budget. A new user task starts a new budget. Failed results are recorded before the model continues, and final responses include a notice for unresolved detected conflicts.
+
+Cancellation stops recovery and attempts rollback if writing has started. Rollback and undo check current contents before restoring eligible files; they can refuse restoration rather than overwrite a conflicting change. Command checkpoints cover eligible project text files, not every command effect: ignored files, credentials, binaries, Git history, network effects, and private `/workspace` clones are outside that scope.
+
+Fresh-read requirements and retry limits are enforced by code. Whether a revised edit is logically correct and whether its tests are adequate still depend on reasoning and verification. Approved commands remain outside this file-edit guard.
 
 ---
 
@@ -183,7 +255,7 @@ REXA supports two operational modes toggled interactively with the `Tab` key:
 REXA delivers a focused developer experience directly in the terminal:
 
 - **Interactive composer**: Built with custom terminal control sequences supporting multi-line input (`Shift+Enter` or `Ctrl+J`), immediate editing, and mode switching (`Tab`).
-- **Live status and token streaming**: Emits phase indicators (`thinking...`, `researching...`, `coding...`) alongside live Markdown token streaming.
+- **Status and output**: Emits phase indicators and streams command output. Coding-agent response text is buffered until output validation; provider streaming support does not mean every response is displayed live.
 - **Formatted Markdown output**: Parses and syntax-highlights Markdown tables, code blocks, bulleted lists, and diffs using specialized terminal renderers.
 - **Error classification**: Translates raw network, provider, and container errors into clear, actionable advice using `ErrorTranslator.ts`.
 
@@ -204,25 +276,49 @@ $ rexa
 
 ## Available tools
 
-REXA registers exactly 9 core tools in `src/index.ts`:
+REXA registers repository, editing, command, web, and memory tools in `src/index.ts`:
 
 | Tool name | Primary input parameters | Operational description |
 | :--- | :--- | :--- |
-| `git_command` | `args`, `workdir` | Executes Git operations. Repository inspection (`status`, `diff`, `log`) runs directly; state-altering operations (`commit`, `checkout`, `push`) prompt for confirmation. Repositories cloned via Git are strictly isolated in `/workspace`. |
-| `execute_command` | `command`, `args`, `timeoutMs`, `workdir` | Runs commands inside the non-root Docker sandbox. Common utilities (`node`, `bun`, `npm`, `tsc`, `python`) are permitted; interactive or destructive operations require explicit user approval. Shell built-ins (`cat`, `ls`, `rm`) are blocked to enforce verified tool use. |
+| `git_command` | `args`, `workdir` | Permission-controlled Git. `/app` paths run on the host with host credentials and configured hooks/helpers; `/workspace` operations and clones run in Docker. |
+| `execute_command` | `command`, `args`, `timeoutMs`, `workdir`, `background` | Permission-controlled executable invocation in Docker, with output, timeouts, and optional background handles. |
+| `glob_files` | `pattern`, `directory`, `cursor`, `limit` | Paginated file discovery respecting ignore rules and protected paths. |
+| `search_code` | `pattern`, `glob`, `directory`, `literal`, `cursor`, `max_results` | Bounded ripgrep text matches with paths and line numbers; literal search by default. |
+| `read_file` | `path`, `start_line`, `end_line`, `max_bytes` | Numbered source ranges with whole-file hash and continuation information. |
+| `read_multiple_files` | `paths` | Read up to ten files with per-file results or errors. |
 | `coding_context_tool` | `path`, `instruction` | Loads file contents into memory with line numbers and token-conscious pagination. |
-| `code_tool` | `create`, `write`, `edit` | Performs atomic file creation, full overwrites, or granular patch operations (`before`, `after`, `replace`, `delete`). Re-reads modified files to verify content consistency. |
-| `get_project_tree` | None | Traverses project directory structure up to 300 entries, excluding artifacts such as `node_modules`, `dist`, `.git`, and build outputs. |
+| `code_tool` | `operation`, `path`, `content`, `changes`, `expected_hash`, or an `operations` batch | Creates, writes, edits, or deletes files with validation and checkpoints. Targeted changes support `before`, `after`, `replace`, and `delete`. |
+| `get_project_tree` | Same pagination arguments as `glob_files` | Compatibility name for paginated file listing. |
+| `poll_process` | `id` | Inspect background status and output; completed command results include checkpoint information. |
+| `write_process` | `id`, `input` | Send input to a running process, subject to command permission checks. |
+| `stop_process` | `id` | Stop an owned process and its container process group, subject to command permission checks. |
 | `search` | `query` | Discovers sources through Tavily or DuckDuckGo. Results are search snippets; exact URLs must be read separately. |
 | `read_url` | `url` | Retrieves exact page content with bounded redirects, readable HTML extraction, optional Chromium rendering, and Tavily extraction fallback. LinkedIn personal profile URLs use Bright Data to retrieve available profile fields. Returns retrieval status, source URLs, limitations, and content. |
 | `save_memory` | `text` | Persists explicit user preferences and development rules to the authenticated cloud memory service. |
 | `search_memory` | `query` | Retrieves authenticated cross-session preferences when explicit context recall is requested. |
 
 ### Command execution safety policy
-Commands passed to `execute_command` are governed by `CommandPolicy.ts`:
-- **Safe command whitelist**: `git`, `bun`, `bunx`, `node`, `npm`, `npx`, `tsc`, `python`, `tail`.
-- **Blocked shell built-ins**: `cat`, `ls`, `dir`, `cd`, `echo`, `mkdir`, `rm`, `cp`, `mv`, `grep`, `pwd`. The agent is directed to use native file tools.
-- **Mandatory confirmation triggers**: Arbitrary command evaluation flags (`-e`, `--eval`), package additions or removals (`install`, `add`, `remove`), file deletions, or unrecognized binaries require explicit user confirmation in the terminal.
+`ToolDispatcher` validates arguments and applies `PermissionService` before execution. Reads and web tools default to allow; edits, commands, external operations, and tools with no effect classification default to ask. In a noninteractive terminal, an operation that still requires asking is denied.
+
+Approval choices are **Allow once**, **Allow this exact operation for this session**, and **Deny**. Session grants match the tool and its complete validated arguments; they do not approve every invocation of an executable.
+
+Optional rules live in `~/.rexa/workspaces/<workspace-id>/permissions.json`:
+
+```json
+{
+  "rules": [
+    { "effect": "read", "action": "allow" },
+    { "effect": "command", "action": "ask" },
+    { "tool": "code_tool", "path": "src/**", "action": "ask" }
+  ]
+}
+```
+
+Rules can match `tool`, `effect`, `path`, `command`, `args`, and `workdir`; actions are `allow`, `ask`, or `deny`. Later matching rules win. A path rule must match every path in an edit batch. An explicit deny takes precedence over a previously granted session approval.
+
+`execute_command` accepts an executable name and an argument array, not a shell expression in `command`. This is argument validation, not a safe-executable whitelist: an approved interpreter or shell can perform broad actions. Clone-specific checks in `CommandPolicy.ts` constrain clone destinations to the private `/workspace` area.
+
+File tools reject paths outside the active project, including symlink escapes. Protected paths include `.git`, `node_modules`, `.rexa`, `.aws`, `.ssh`, `.env` variants, and `.pem`/`.key` files; `.env.example` is allowed. These file-tool checks do not restrict approved commands.
 
 ---
 
@@ -234,9 +330,13 @@ To prevent unexpected side effects on the host workstation, command executions t
 - **Isolation boundaries**:
   - Drops all Linux capabilities (`cap_drop: [ALL]`).
   - Runs as an unprivileged user (`sandbox`, UID `1000:1000`).
-  - Resource limits: capped at `0.5 CPU`, `512MB RAM`, and `128 PIDs`.
+  - Default resource limits: `1 CPU`, `1GB RAM`, and `128 PIDs`; CPU and memory are configurable.
   - Non-root working directories: host directory mounted to `/app`; temporary clones isolated to `/workspace`.
-- **Lifecycle management**: `ExecutionManager.ts` provisions containers on demand using project-specific naming (`rexa_<project-hash>`), terminates on command timeouts (default 60s, maximum 300s), and shuts down the container stack cleanly upon session exit.
+- **Lifecycle management**: `ExecutionManager.ts` provisions containers on demand using a per-instance Compose project name (`rexa_<pid>_<random-id>`), stops commands on timeouts (default 60s, maximum 300s), and cleans up its container stack on normal CLI exit.
+
+The container process supervisor is TypeScript running with Bun (`src/tools/sandbox-supervisor.ts`). It manages Linux process groups so completion, timeout, and cancellation also clean up descendants. Python remains an installed container tool; the supervisor no longer depends on Python.
+
+The project mount at `/app` is writable and exposes files inside the mounted directory, including credentials stored there. Provider keys and the Docker socket are not injected by Compose. Container networking defaults to bridge; set `REXA_SANDBOX_NETWORK=none` to disable it. The separate `git_command` tool runs `/app` Git operations on the host, so not every tool invocation is container-isolated.
 
 ---
 
@@ -261,7 +361,7 @@ Security in REXA is integrated directly into the agent reasoning loop rather tha
 - Public URLs are excluded from whole-string entropy scoring; credentials and suspicious query values remain checked.
 
 ### Reading websites
-In **act** mode, ask `Check https://example.com and give me details`. Plan mode remains tool-free and does not fetch websites.
+Ask `Check https://example.com and give me details`. Act mode can route the request to the research agent; plan mode uses the main agent with read and web tools available, so it can also fetch public sources.
 
 Static HTML, plain text, JSON, and GitHub README/file/issue/PR bodies are supported. GitHub comments, reviews, and diffs are not automatically retrieved. PDFs and other binary formats return an unsupported-format result. Login pages, access challenges, unavailable content, and partial extraction are reported explicitly.
 
@@ -298,7 +398,8 @@ REXA features an explicit, account-backed memory architecture:
 ## Installation and setup
 
 ### Prerequisites
-- **Runtime**: [Bun](https://bun.sh/) (version 1.1 or higher) or Node.js (version 18 or higher).
+- **Runtime**: [Bun](https://bun.sh/) (package engine requirement: version 1.1 or higher). The CLI uses Bun APIs; Node.js alone is not a replacement runtime.
+- **Repository discovery**: `rg` (ripgrep) on the host PATH.
 - **Containerization**: [Docker Desktop](https://www.docker.com/) running locally for command execution isolation.
 - **API key**: An active Google Gemini API key.
 - **Optional LinkedIn extraction**: A Bright Data account API token with access to the LinkedIn Profiles scraper and available credits.
@@ -396,6 +497,9 @@ Environment variables take precedence over credentials stored in the local vault
 | `BRIGHTDATA_API_KEY` | Bright Data account API token for LinkedIn personal profile extraction; overrides the saved token. Browser API connection credentials are not accepted. |
 | `REXA_CLI_TOKEN` | Overrides the authenticated CLI web token. |
 | `REXA_WORKSPACE` | Overrides the host directory mounted inside `/app` in Docker (defaults to `process.cwd()`). |
+| `REXA_SANDBOX_NETWORK` | Container network mode; defaults to `bridge`. Use `none` to disable networking. |
+| `REXA_SANDBOX_CPUS` | Container CPU limit; defaults to `1`. |
+| `REXA_SANDBOX_MEMORY` | Container memory limit; defaults to `1G`. |
 | `REXA_CONFIG_KEY` | Custom 32-byte Base64 key for file-based configuration encryption. |
 | `LOG_LEVEL` | Set to `debug` to enable verbose execution logs and stack traces. |
 
@@ -406,7 +510,7 @@ Environment variables take precedence over credentials stored in the local vault
 REXA integrates with the Gemini LLM model through `GeminiProvider.ts`:
 
 - **Structured function calling**: Automatically converts Zod schema definitions into JSON schema declarations.
-- **Token streaming**: Streams partial responses directly to the user interface via `onToken` callbacks while buffering function calls.
+- **Token streaming support**: The provider supports token callbacks. The coding agent buffers response text until output validation before rendering it.
 - **Plan reflection**: Invokes an isolated reflection pass prior to tool execution to evaluate whether candidate function calls align with user constraints.
 - **Error classification**: Captures provider errors (including HTTP 429 quota exhaustion, HTTP 503 service unavailability, and context length limits) and converts them into structured user guidance.
 
@@ -430,18 +534,30 @@ REXA integrates with the Gemini LLM model through `GeminiProvider.ts`:
 │   │   ├── Message.ts               # Conversation turn data contracts
 │   │   └── RunCallbacks.ts          # Streaming and status update callback interfaces
 │   ├── tools/
-│   │   ├── ToolRegistry.ts          # Central tool registration and schema validation
-│   │   ├── CodingTools.ts           # Implementation of code_tool and coding_context_tool
-│   │   ├── FileTools.ts             # File system reading, creation, and project tree traversal
+│   │   ├── ToolRegistry.ts          # Tool contracts and registration
+│   │   ├── ToolDispatcher.ts        # Mode, schema, and permission checks
+│   │   ├── PermissionService.ts     # Rules and exact-operation session grants
+│   │   ├── RepositoryTools.ts       # Discovery, code search, and read tools
+│   │   ├── Workspace.ts             # File-tool boundaries, reads, and hashes
+│   │   ├── SafeEditor.ts            # Validated edits and recovery integration
+│   │   ├── CheckpointStore.ts       # Transactions, command snapshots, and undo
+│   │   ├── EditConflictError.ts     # Structured conflict results
+│   │   ├── StaleEditRecovery.ts     # Per-task fresh-read and retry tracking
 │   │   ├── GitTools.ts              # Git command runner with workspace isolation
 │   │   ├── executeTools.ts          # Sandboxed command execution tool
 │   │   ├── ExecutionManager.ts      # Docker container lifecycle management
-│   │   ├── CommandPolicy.ts         # Command whitelist, blacklist, and confirmation rules
+│   │   ├── ProcessManager.ts        # Output, input, timeout, and cancellation
+│   │   ├── sandbox-supervisor.ts    # Bun supervisor for Linux process groups
+│   │   ├── CommandPolicy.ts         # Git operation parsing and clone checks
 │   │   ├── SearchTool.ts            # Tavily / DuckDuckGo source discovery
 │   │   ├── ReadUrlTool.ts           # Exact URL content and retrieval evidence
 │   │   ├── web/                     # Bounded HTTP, HTML extraction, browser worker
 │   │   ├── MemoryTools.ts           # Cloud memory save and search interfaces
 │   │   └── MemorySearchRules.ts     # Decision criteria for memory queries
+│   ├── sessions/
+│   │   ├── SessionStore.ts          # Workspace-scoped transcript snapshots
+│   │   ├── SessionRecovery.ts       # Unknown outcomes without automatic replay
+│   │   └── ContextManager.ts        # Older-context summaries and recent turns
 │   ├── guardrails/
 │   │   ├── input/
 │   │   │   ├── InputGuardrails.ts   # Prompt injection and malicious content detection
@@ -458,6 +574,7 @@ REXA integrates with the Gemini LLM model through `GeminiProvider.ts`:
 │   │   └── GeminiStreaming.ts       # Streaming helper utilities
 │   ├── cli/
 │   │   ├── AgentCLI.ts              # Interactive REPL session controller
+│   │   ├── LocalCommands.ts         # Resume, undo, permissions, and process commands
 │   │   ├── AgentUI.ts               # Terminal UI rendering, composer, and formatting
 │   │   └── TerminalState.ts         # Spinner coordination during interactive prompts
 │   ├── config/
@@ -476,16 +593,7 @@ REXA integrates with the Gemini LLM model through `GeminiProvider.ts`:
 
 ## Comparative analysis
 
-| Feature | REXA | Claude Code | OpenHands |
-| :--- | :--- | :--- | :--- |
-| **Plan reflection before tool calls** | Yes (Automated pre-flight check via Gemini LLM model) | Partial | Partial |
-| **Multi-agent routing** | Yes (Dedicated Supervisor and Research Agent) | Partial | Partial |
-| **Docker sandboxed command execution** | Yes (Default, non-root, isolated volumes) | No | Yes |
-| **Dual-layer guardrails** | Yes (Independent input and output evaluation) | No | No |
-| **Entropy-based secret scanning** | Yes (Regex pattern analysis + Shannon entropy) | No | Partial |
-| **External web research tier** | Yes (Tavily, GitHub, DuckDuckGo, Web Scrape) | Partial | Yes |
-| **Plan vs. Act operational modes** | Yes (Interactive single-key toggle) | Yes | Yes |
-| **License** | MIT License | Proprietary | MIT License |
+The five improvements above describe Rexa's implementation. This repository does not establish feature parity or performance rankings against other coding agents. A useful comparison needs dated product evidence and repeatable coding tasks measuring correctness, preservation of unrelated changes, verification quality, recovery behavior, time, and cost.
 
 ---
 
@@ -534,8 +642,17 @@ To contribute or test modifications locally:
 # Run strict TypeScript compilation checks
 bun run typecheck
 
+# Run repository, planning, permissions, editing, process, and session tests
+bun run test:core
+
 # Run web retrieval and mocked LinkedIn extraction tests (no live API calls)
 bun run test:web
+
+# Run browser fixtures (requires the installed Chromium runtime)
+bun run test:web:browser
+
+# Run real container lifecycle fixtures (requires a running Docker daemon)
+bun run test:docker
 
 # Start local Docker sandbox manually
 bun run docker:up
@@ -547,11 +664,15 @@ bun run docker:down
 bun run docker:build
 ```
 
+The stale-edit tests use temporary workspaces and mocked model responses, including an agent recovery flow that runs a real fixture test command. They do not evaluate a live model's reasoning. Passing fixtures cover their asserted scenarios, not every possible filesystem race or generated-code error. See [Developing Rexa](./DEVELOPMENT.md) for architecture, lifecycle rules, and readability conventions.
+
 ---
 
 ## Contributing
 
 Contributions are welcome. Please refer to [CONTRIBUTING.md](./CONTRIBUTING.md) and the [Code of Conduct](./CODE_OF_CONDUCT.md) for contribution guidelines and development workflow standards.
+
+For a source-code walkthrough and readability conventions, see [Developing Rexa](./DEVELOPMENT.md).
 
 ---
 
