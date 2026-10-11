@@ -23,6 +23,7 @@ import { SessionStore } from "./sessions/SessionStore";
 import { LocalCommands } from "./cli/LocalCommands";
 import { PermissionService, setPermissions } from "./tools/PermissionService";
 import { ConfigManager } from "./config/ConfigManager";
+import { runOptionalApiSetup } from "./cli/OptionalApiSetup";
 
 import { password } from "@inquirer/prompts";
 import chalk from "chalk";
@@ -118,7 +119,7 @@ async function main() {
     configCmd
         .command("set-brightdata-key")
         .description(
-            "Save the Bright Data API key for LinkedIn profile extraction",
+            "Save the optional Bright Data API key for LinkedIn profile extraction",
         )
         .action(async () => {
             let key: string;
@@ -185,6 +186,7 @@ async function main() {
         // Resolve Gemini API key dynamically across env vars, ~/.rexa/config.json, or prompt user
         const apiKey = await ConfigManager.ensureApiKey();
         process.env.GEMINI_API_KEY = apiKey;
+        await runOptionalApiSetup();
 
         // Initialize Agent
         const llm = new GeminiProvider(apiKey);

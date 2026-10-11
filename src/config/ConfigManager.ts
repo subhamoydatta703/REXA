@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import chalk from "chalk";
 import { password } from "@inquirer/prompts";
 import keytar from "keytar";
+import type { OptionalApiProvider } from "../cli/OptionalApiSetup";
 
 const CONFIG_DIR = path.join(os.homedir(), ".rexa");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
@@ -65,6 +66,7 @@ export interface RexaConfig {
     geminiApiKey?: string;
     tavilyApiKey?: string;
     brightDataApiKey?: string;
+    optionalApiSetup?: Partial<Record<OptionalApiProvider, boolean>>;
     cliAuthToken?: string;
     cliUserId?: string;
     updatedAt?: string;
@@ -180,6 +182,10 @@ export class ConfigManager {
                     brightDataApiKey: fromVault.brightDataApiKey || parsed.brightDataApiKey,
                     cliAuthToken: fromVault.cliAuthToken || parsed.cliAuthToken,
                     cliUserId: fromVault.cliUserId || parsed.cliUserId,
+                    optionalApiSetup: {
+                        tavily: parsed.optionalApiSetup?.tavily === true,
+                        brightData: parsed.optionalApiSetup?.brightData === true,
+                    },
                     updatedAt: parsed.updatedAt,
                 };
             }
@@ -206,6 +212,7 @@ export class ConfigManager {
                 brightDataApiKey: config.brightDataApiKey ? encrypt(config.brightDataApiKey) : undefined,
                 cliAuthToken: config.cliAuthToken ? encrypt(config.cliAuthToken) : undefined,
                 cliUserId: config.cliUserId ? encrypt(config.cliUserId) : undefined,
+                optionalApiSetup: config.optionalApiSetup,
                 updatedAt: config.updatedAt,
             };
 
@@ -255,22 +262,46 @@ export class ConfigManager {
     static async setTavilyApiKey(key: string): Promise<void> {
         const trimmed = key.trim();
         if (!trimmed) {
-            console.log(chalk.red("  ✗ Tavily API Key cannot be empty."));
-            return;
+            throw new Error("Tavily API key cannot be empty.");
         }
-        process.env.TAVILY_API_KEY = trimmed;
+        const currentConfig = await this.getConfig();
+        let savedInVault = false;
         try {
             await keytar.setPassword(KEYTAR_SERVICE, TAVILY_ACCOUNT, trimmed);
-        } catch (error) {
-            // Ignore keytar failures and fall back to file storage
+            savedInVault = true;
+        } catch {
+            // Use encrypted file storage when the OS vault is unavailable.
         }
-        const currentConfig = await this.getConfig().catch(() => ({}));
-        this.saveConfig({
+        const savedInFile = this.saveConfig({
             ...currentConfig,
             tavilyApiKey: trimmed,
             updatedAt: new Date().toISOString(),
         });
-        console.log(chalk.green("  ✓ Tavily Search API Key securely saved to ") + chalk.gray(CONFIG_FILE));
+        if (!savedInVault && !savedInFile) {
+            throw new Error("Could not save the Tavily API key.");
+        }
+        process.env.TAVILY_API_KEY = trimmed;
+        console.log(chalk.green("  Tavily API key securely saved."));
+    }
+
+    static async isOptionalApiSetupComplete(
+        provider: OptionalApiProvider,
+    ): Promise<boolean> {
+        return (await this.getConfig()).optionalApiSetup?.[provider] === true;
+    }
+
+    static async completeOptionalApiSetup(
+        provider: OptionalApiProvider,
+    ): Promise<void> {
+        const config = await this.getConfig();
+        const saved = this.saveConfig({
+            ...config,
+            optionalApiSetup: { ...config.optionalApiSetup, [provider]: true },
+            updatedAt: new Date().toISOString(),
+        });
+        if (!saved) {
+            throw new Error("Could not save the optional API setup decision.");
+        }
     }
 
     /**

@@ -127,6 +127,15 @@ describe("exact page reading", () => {
 });
 
 describe("search is source discovery", () => {
+    test("missing optional Tavily configuration still allows DuckDuckGo search", async () => {
+        const request = mock(async () => response('<div class="result"><a class="result__a" href="https://example.com/article">Article</a><span class="result__snippet">Excerpt</span></div>'));
+        const tool = createSearchTool({ providerSearch: async () => null, request });
+        const result = await tool.execute({ query: "a research topic" });
+        expect(result.success).toBe(true);
+        expect(result.data.provider).toBe("DuckDuckGo");
+        expect(result.data.results[0].link).toBe(url);
+        expect(request).toHaveBeenCalledTimes(1);
+    });
     test("matches each organic result with its own snippet", () => {
         const results = parseSearchResults('<div class="result result--ad"><a class="result__a" href="https://ads.example/">Ad</a><a class="result__snippet">Wrong snippet</a></div><div class="result"><a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Farticle" class="result__a">Article &amp; facts</a><span class="result__snippet">Correct snippet</span></div>');
         expect(results).toEqual([{ title: "Article & facts", snippet: "Correct snippet", link: url }]);
