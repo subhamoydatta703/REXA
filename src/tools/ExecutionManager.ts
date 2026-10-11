@@ -1,255 +1,218 @@
-import { z } from "zod";
-import {logger } from "../logger/AgentLogger"
 import path from "node:path";
-import crypto from "node:crypto";
-const executeCommandInputSchema = z.object({
-    command: z
-        .string()
-        .describe(
-            "The actual executable name only, such as git, bun, node, npm, npx, tsc, or python. " +
-            "Do not use shell built-ins or aliases such as ls, cat, dir, type, cd, echo, mkdir, find, cmd, grep, pwd."
-        ),
-    args: z
-        .array(z.string())
-        .describe("Arguments for the executable. Each argument must be a separate string.")
-        .default([]),
-    timeoutMs: z
-        .number()
-        .int()
-        .positive()
-        .max(300_000) 
-        .optional()
-        .describe("Optional hard execution timeout in milliseconds (default 60_000)."),
-    workdir: z
-        .enum(["/app", "/workspace"])
-        .default("/app")
-        .describe("Sandbox-only working directory. Use /workspace for cloned repositories."),
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import { ProcessManager } from "./ProcessManager";
+import type { ToolExecutionContext } from "./ToolRegistry";
+
+export const workdirSchema = z
+    .string()
+    .default("/app")
+    .refine(
+        (value) =>
+            /^\/(app|workspace)(?:\/[^\\\0]*)?$/.test(value) &&
+            !value.split("/").some((p) => p === ".." || p === "."),
+        "Working directory must stay within /app or /workspace.",
+    );
+const inputSchema = z.object({
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    timeoutMs: z.number().int().positive().max(300_000).default(60_000),
+    workdir: workdirSchema,
 });
-
-type ExecuteCommandInput = z.infer<typeof executeCommandInputSchema>;
-
+export type ExecutionInput = z.input<typeof inputSchema>;
 export interface ExecutionResult {
     success: boolean;
-    status: "executed" | "timeout" | "failed";
+    status: string;
     command: string;
     args: string[];
     exitCode: number | null;
     stdout: string;
     stderr: string;
-    workdir: "/app" | "/workspace";
+    workdir: string;
+    truncated?: boolean;
 }
-
-const DEFAULT_TIMEOUT_MS = 60_000;
-const SERVICE_NAME = "sandbox";
 const REXA_ROOT = path.resolve(import.meta.dir, "../..");
 const COMPOSE_FILE = path.join(REXA_ROOT, "docker-compose.yaml");
 
+// Pass only Docker and operating-system settings; provider credentials stay on the host.
+const DOCKER_ENVIRONMENT_KEYS = [
+    "PATH",
+    "Path",
+    "PATHEXT",
+    "SystemRoot",
+    "SYSTEMROOT",
+    "WINDIR",
+    "ComSpec",
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ALLUSERSPROFILE",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+    "CommonProgramFiles",
+    "CommonProgramFiles(x86)",
+    "CommonProgramW6432",
+    "SystemDrive",
+    "TEMP",
+    "TMP",
+    "OS",
+    "USERNAME",
+    "USERDOMAIN",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "DOCKER_HOST",
+    "DOCKER_CONTEXT",
+    "DOCKER_CONFIG",
+    "DOCKER_TLS_VERIFY",
+    "DOCKER_CERT_PATH",
+];
 
+/** Owns one Docker Compose project and its command processes. */
 export class ExecutionManager {
-    private readonly targetWorkspace = path.resolve(process.cwd());
-    private readonly composeProjectName = `rexa_${crypto
-        .createHash("sha256")
-        .update(this.targetWorkspace)
-        .digest("hex")
-        .slice(0, 12)}`;
+    private readonly targetWorkspace: string;
+    readonly composeProjectName = `rexa_${process.pid}_${randomUUID().slice(0, 8)}`;
     private startedThisSession = false;
+    private starting?: Promise<void>;
+    readonly processes = new ProcessManager();
+    constructor(workspace = process.cwd()) {
+        this.targetWorkspace = path.resolve(workspace);
+    }
 
-    private get composeArgs(): string[] {
-        // Short options work across more Docker Compose v2 releases than the
-        // long forms (some installations reject --project-name).
+    private get composeArgs() {
         return ["compose", "-p", this.composeProjectName, "-f", COMPOSE_FILE];
     }
 
     private get dockerEnv(): Record<string, string> {
-        // This environment is for the Docker client, not the sandbox container.
-        // Compose only needs REXA_WORKSPACE; Docker needs a small set of OS and
-        // Docker-context variables to run correctly on the user's machine.
-        const allowedKeys = [
-            "PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "WINDIR", "ComSpec",
-            "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
-            "ALLUSERSPROFILE", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
-            "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "SystemDrive",
-            "TEMP", "TMP", "OS", "USERNAME", "USERDOMAIN", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
-            "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
-        ];
-        const dockerEnv: Record<string, string> = { REXA_WORKSPACE: this.targetWorkspace };
-        for (const key of allowedKeys) {
-            const value = process.env[key];
-            if (typeof value === "string") dockerEnv[key] = value;
-        }
-        return dockerEnv;
-    }
-    
-    async execute(input: ExecuteCommandInput): Promise<ExecutionResult> {
-        const parsed = executeCommandInputSchema.parse(input);
-        const timeoutMs = parsed.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-
-        // Guardrail (blocked/safe/confirmation) happens in executeTools before
-        // this method is reached. Here we only guarantee the sandbox is up.
-        await this.ensureSandbox();
-
-        logger.info(`Docker exec: ${parsed.command} ${parsed.args.join(" ")}`);
-        const dockerArgs = [
-            ...this.composeArgs,
-            "exec",
-            "-T",
-            "-w",
-            parsed.workdir,
-            SERVICE_NAME,
-            parsed.command,
-            ...parsed.args,
-        ];
-
-        const proc = Bun.spawn(["docker", ...dockerArgs], {
-            stdout: "pipe",
-            stderr: "pipe",
-            cwd: REXA_ROOT,
-            env: this.dockerEnv,
-        });
-
-        // Capture stdout/stderr as they stream in.
-        const fullStdout = new Promise<string>((resolve) => {
-            new Response(proc.stdout).text().then(resolve).catch(() => resolve(""));
-        });
-        const fullStderr = new Promise<string>((resolve) => {
-            new Response(proc.stderr).text().then(resolve).catch(() => resolve(""));
-        });
-
-        // Hard execution timeout
-        let timedOut = false;
-        let timerId: ReturnType<typeof setTimeout> | undefined;
-        const timeoutSignal = new Promise<void>((resolve) => {
-            timerId = setTimeout(() => {
-                timedOut = true;
-                try {
-                    proc.kill();
-                } catch {
-                    
-                }
-                resolve();
-            }, timeoutMs);
-        });
-
-        const exitCode = await Promise.race([proc.exited, timeoutSignal]).finally(
-            async () => {
-                if (timerId) {
-                    clearTimeout(timerId);
-                }
-                // If the timeout won, the process was killed — still await its
-                // real exit so we don't report before the kill settles.
-                try {
-                    await proc.exited;
-                } catch {
-                    
-                }
-            },
-        );
-
-        const stdout = await fullStdout;
-        const stderr = await fullStderr;
-
-        if (timedOut) {
-            return {
-                success: false,
-                status: "timeout" as const,
-                command: parsed.command,
-                args: parsed.args,
-                exitCode: typeof exitCode === "number" ? exitCode : null,
-                stdout,
-                stderr:
-                    stderr ||
-                    `Command timed out after ${timeoutMs}ms and was killed. ` +
-                        "The sandbox is still intact and ready for the next command.",
-                workdir: parsed.workdir,
-            };
-        }
-
-        return {
-            success: exitCode === 0,
-            status: "executed" as const,
-            command: parsed.command,
-            args: parsed.args,
-            exitCode: typeof exitCode === "number" ? exitCode : 1,
-            stdout,
-            stderr,
-            workdir: parsed.workdir,
+        const env: Record<string, string> = {
+            REXA_WORKSPACE: this.targetWorkspace,
+            REXA_SANDBOX_NETWORK: process.env.REXA_SANDBOX_NETWORK || "bridge",
+            REXA_SANDBOX_MEMORY: process.env.REXA_SANDBOX_MEMORY || "1G",
+            REXA_SANDBOX_CPUS: process.env.REXA_SANDBOX_CPUS || "1",
         };
-}
-
-    
-    //   Ensure the sandbox service is up
-    async ensureSandbox(): Promise<void> {
-        // Check real state: list the container(s) for the service.
-        const ps = Bun.spawn(["docker", ...this.composeArgs, "ps", "-q", SERVICE_NAME], {
-            stdout: "pipe",
-            stderr: "pipe",
-            cwd: REXA_ROOT,
-            env: this.dockerEnv,
-        });
-        const psOut = await new Response(ps.stdout).text();
-        const psErr = await new Response(ps.stderr).text();
-        await ps.exited;
-
-        if (psErr.includes("no configuration file") || psErr.includes("no such file")) {
-            throw new Error(
-                "Docker Compose sandbox configuration is missing/unreadable. " +
-                    `Cannot run "${SERVICE_NAME}". Check REXA's bundled docker-compose.yaml is available.`,
-            );
-        }
-
-        const containerId = psOut.trim().split(/\s+/)[0];
-        if (containerId) {
-            // Confirm the found container is actually in a running state.
-            const inspect = Bun.spawn(
-                ["docker", "inspect", "-f", "{{.State.Running}}", containerId],
-                { stdout: "pipe", stderr: "pipe", cwd: REXA_ROOT },
-            );
-            const running = (await new Response(inspect.stdout).text()).trim() === "true";
-            await inspect.exited;
-            if (running) {
-                return;
+        for (const key of DOCKER_ENVIRONMENT_KEYS) {
+            if (process.env[key]) {
+                env[key] = process.env[key]!;
             }
         }
+        return env;
+    }
 
-        // Not up (or not running): build (if needed) and start it.
-        const up = Bun.spawn(["docker", ...this.composeArgs, "up", "-d", "--build", SERVICE_NAME], {
-            stdout: "pipe",
-            stderr: "pipe",
+    private async docker(args: string[], timeoutMs = 120_000) {
+        const id = await this.processes.start(["docker", ...args], {
             cwd: REXA_ROOT,
             env: this.dockerEnv,
+            timeoutMs,
         });
-        const upOut = await new Response(up.stdout).text();
-        const upErr = await new Response(up.stderr).text();
-        const upExit = await up.exited;
-
-        if (upExit !== 0) {
+        const result = await this.processes.wait(id);
+        if (!result.success) {
             throw new Error(
-                `Failed to start sandbox service (exit ${upExit}).\nstdout: ${upOut}\nstderr: ${upErr}`,
+                `Docker operation ${result.status}: ${result.stderr || result.stdout}`,
             );
         }
-          logger.info("Sandbox container started");
+        return result.stdout;
+    }
+
+    private async startSandbox(): Promise<void> {
+        await this.docker(
+            [...this.composeArgs, "up", "-d", "--build", "sandbox"],
+            300_000,
+        );
         this.startedThisSession = true;
     }
 
-    
-    //   Stop and remove the sandbox stack — but only if this session actually
-    //   brought it up
-    async stop(): Promise<void> {
+    private supervisorArgs(
+        action: "run" | "stop",
+        identifier: string,
+    ): string[] {
+        return [
+            ...this.composeArgs,
+            "exec",
+            "-T",
+            "sandbox",
+            "bun",
+            "/opt/rexa/sandbox-supervisor.ts",
+            action,
+            identifier,
+        ];
+    }
+
+    private async stopContainerProcess(identifier: string): Promise<void> {
+        await this.docker(this.supervisorArgs("stop", identifier), 10_000);
+    }
+
+    async ensureSandbox() {
+        if (!this.starting) {
+            this.starting = this.startSandbox();
+        }
+        try {
+            await this.starting;
+        } catch (e) {
+            this.starting = undefined;
+            throw e;
+        }
+    }
+
+    async start(input: ExecutionInput, context: ToolExecutionContext = {}) {
+        const parsed = inputSchema.parse(input);
+        context.signal?.throwIfAborted();
+        await this.ensureSandbox();
+        context.signal?.throwIfAborted();
+        const remoteId = randomUUID();
+        const id = await this.processes.start(
+            [
+                "docker",
+                ...this.supervisorArgs("run", remoteId),
+                String(parsed.timeoutMs / 1000),
+                parsed.workdir,
+                parsed.command,
+                ...parsed.args,
+            ],
+            {
+                cwd: REXA_ROOT,
+                env: this.dockerEnv,
+                timeoutMs: parsed.timeoutMs + 5000,
+                signal: context.signal,
+                onOutput: context.onOutput,
+                terminate: () => this.stopContainerProcess(remoteId),
+            },
+        );
+        return { id, ...parsed };
+    }
+
+    async execute(
+        input: ExecutionInput,
+        context: ToolExecutionContext = {},
+    ): Promise<ExecutionResult> {
+        const started = await this.start(input, context);
+        const result = await this.processes.wait(started.id);
+        return {
+            ...result,
+            command: started.command,
+            args: started.args,
+            workdir: started.workdir,
+            status: result.exitCode === 124 ? "timeout" : result.status,
+            success: result.success && result.exitCode !== 124,
+        };
+    }
+
+    async stop() {
+        await this.processes.stopAll();
         if (!this.startedThisSession) {
             return;
         }
+        await this.docker([
+            ...this.composeArgs,
+            "down",
+            "--remove-orphans",
+            "--volumes",
+        ]);
         this.startedThisSession = false;
-        const down = Bun.spawn(["docker", ...this.composeArgs, "down", "--remove-orphans"], {
-            stdout: "pipe",
-            stderr: "pipe",
-            cwd: REXA_ROOT,
-            env: this.dockerEnv,
-        });
-        await new Response(down.stdout).text();
-        await new Response(down.stderr).text();
-        await down.exited;
+        this.starting = undefined;
     }
 }
-
-//   Shared singleton used by the execute_command tool and the Agent lifecycle. 
 export const sandboxManager = new ExecutionManager();

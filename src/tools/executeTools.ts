@@ -1,261 +1,157 @@
 import { z } from "zod";
-import type { Tool } from "./ToolRegistry";
-import { createInterface } from "node:readline/promises";
-import { sandboxManager } from "./ExecutionManager";
-import { pauseActiveSpinner, resumeActiveSpinner } from "../cli/TerminalState";
+import type { Tool, ToolExecutionContext } from "./ToolRegistry";
+import {
+    sandboxManager,
+    workdirSchema,
+    type ExecutionManager,
+} from "./ExecutionManager";
 import { getGitOperation, validateSandboxedGitClone } from "./CommandPolicy";
+import { permissions } from "./PermissionService";
+import { editor } from "./SafeEditor";
+import type { ProcessResult } from "./ProcessManager";
+import type { Checkpoint, CheckpointStore } from "./CheckpointStore";
 
-const executeSchema = z.object({
+const schema = z.object({
     command: z
         .string()
-        .describe(
-            "The actual executable name only, such as git, bun, node, npm, npx, tsc, or python. " +
-            "Do not use shell built-ins or aliases such as ls, cat, dir, type, cd, echo, mkdir, find, cmd, grep, pwd."
+        .min(1)
+        .regex(
+            /^[a-zA-Z0-9_.+-]+$/,
+            "Use an executable name, not a path or shell expression.",
         ),
-
-    args: z
-        .array(z.string())
-        .describe(
-            "Arguments for the executable. Each argument must be a separate string."
-        )
-        .default([]),
-
-    timeoutMs: z
-        .number()
-        .int()
-        .positive()
-        .max(300_000)
-        .optional()
-        .describe(
-            "Optional hard execution timeout in milliseconds. Defaults to 60_000 (1 minute). " +
-            "Exceeding the timeout kills the command and returns a clear timeout error."
-        ),
-    workdir: z
-        .enum(["/app", "/workspace"])
-        .default("/app")
-        .describe("Sandbox-only working directory. Use /workspace for cloned repositories."),
+    args: z.array(z.string()).default([]),
+    timeoutMs: z.number().int().positive().max(300_000).default(60_000),
+    workdir: workdirSchema,
+    background: z.boolean().default(false),
 });
 
-export type CommandPolicy = {
-    // Executables that run without confirmation.
-    safe: string[];
-    // Shell built-ins / aliases that don't exist as standalone executables
-    // (or behave differently when spawned without a shell). Always rejected,
-    // never even offered for confirmation.
-    blocked: string[];
-};
-
-const commandPolicy: CommandPolicy = {
-    safe: [
-        "git",
-        "bun",
-        "bunx",
-        "node",
-        "npm",
-        "npx",
-        "tsc",
-        "python",
-        "tail",
-    ],
-    blocked: [
-        "ls",
-        "cat",
-        "dir",
-        "type",
-        "cd",
-        "echo",
-        "mkdir",
-        "rmdir",
-        "find",
-        "cmd",
-        "grep",
-        "pwd",
-        "rm",
-        "cp",
-        "mv",
-        "touch",
-        "which",
-        "where",
-    ],
-};
-
-type Validation = "safe" | "blocked" | "confirmation_required";
-
-function validateCommand(command: string, args: string[] = []): Validation {
-    const cmd = command.trim().toLowerCase();
-
-    if (commandPolicy.blocked.includes(cmd)) {
-        return "blocked";
-    }
-    const hasEvalFlag = args.some(arg => 
-        ["-e", "-c", "--eval", "--print", "-p"].includes(arg.trim())
-    );
-    if (hasEvalFlag) {
-        return "confirmation_required";
-    }
-
-    // Safe executables still require confirmation for state-changing operations.
-    if (cmd === "git") {
-        return "confirmation_required";
-    }
-    if (["bun", "bunx", "npm", "npx"].includes(cmd) && ["install", "add", "remove", "uninstall", "update", "upgrade", "ci"].includes(args[0]?.trim().toLowerCase() || "")) {
-        return "confirmation_required";
-    }
-    // Script runners can execute arbitrary project code, make network requests,
-    // and modify files even when their executable name looks familiar.
-    if (["node", "python", "bunx", "npx"].includes(cmd)) {
-        return "confirmation_required";
-    }
-    if (cmd === "bun" && ["run", "x"].includes(args[0]?.trim().toLowerCase() || "")) {
-        return "confirmation_required";
-    }
-    if (cmd === "npm" && ["run", "exec", "publish"].includes(args[0]?.trim().toLowerCase() || "")) {
-        return "confirmation_required";
-    }
-    
-    if (commandPolicy.safe.includes(cmd)) {
-        return "safe";
-    }
-
-    return "confirmation_required";
+interface CompletedCommand extends ProcessResult {
+    checkpointScope: string;
+    checkpoint?: string;
+    changedFiles?: string[];
+    diff?: string;
 }
 
-import { confirm } from "@inquirer/prompts";
+export function executionTools(
+    manager: ExecutionManager = sandboxManager,
+    checkpoints: CheckpointStore = editor.checkpoints,
+): Tool[] {
+    const completions = new Map<string, Promise<CompletedCommand>>();
+    const idSchema = z.object({ id: z.string().uuid() });
+    const writeSchema = idSchema.extend({ input: z.string().max(8192) });
 
-async function askForConfirmation(command: string, args: string[]): Promise<boolean> {
-    const display = [command, ...args].join(" ");
-    const spinnerWasActive = pauseActiveSpinner();
-    try {
-        return await confirm({
-            message: `Run "${display}"?`,
-            default: false,
-        });
-    } catch {
-        return false;
-    } finally {
-        resumeActiveSpinner(spinnerWasActive);
+    async function completeCommand(
+        id: string,
+        checkpoint?: Checkpoint,
+    ): Promise<CompletedCommand> {
+        const result = await manager.processes.wait(id);
+        const snapshot = checkpoint
+            ? await checkpoints.finishCommand(checkpoint)
+            : {
+                  checkpointScope:
+                      "Private /workspace clones are not checkpointed.",
+              };
+        return {
+            ...result,
+            status: result.exitCode === 124 ? "timeout" : result.status,
+            ...snapshot,
+        };
     }
-}
 
-function blockedResponse(command: string) {
-    return {
-        success: false,
-        status: "blocked" as const,
-        command,
-        error:
-            `"${command}" is not usable here — it's a shell built-in or alias that does not run ` +
-            `as a standalone executable on this platform. Do not retry this command or a similar ` +
-            `shell alternative (ls/cat/dir/type/find/cmd/grep/etc are all blocked). ` +
-            `Use find_file to locate a file, read_file or read_multiple_files to read contents, ` +
-            `read_directory to read an entire directory recursively, or list_files to enumerate ` +
-            `file paths without reading contents.`,
-    };
-}
-
-function rejectedResponse(command: string) {
-    return {
-        success: false,
-        status: "rejected" as const,
-        command,
-        error: "Command execution was rejected by the user.",
-    };
-}
-
-export const executeCommand: Tool = {
-    name: "execute_command",
-
-    description:
-        "Execute a real, standalone executable directly (in a Docker sandbox). " +
-        "USE THIS only for build/run/package-manager/VCS tools such as git, bun, node, npm, npx, tsc, python. " +
-        "DO NOT use this for file inspection or shell built-ins/aliases " +
-        "(ls, cat, dir, type, cd, echo, mkdir, rmdir, find, cmd, grep, pwd, rm, cp, mv, touch, which, where) " +
-        "— these are blocked and will always return an error instead of running. " +
-        "To inspect files instead, use find_file, read_file, read_multiple_files, read_directory, or list_files. " +
-        "command must be the executable name only; put every argument as a separate string in args.",
-
-    parameters: executeSchema,
-
-    execute: async (args: z.infer<typeof executeSchema>) => {
-        const parsed = executeSchema.parse(args);
-        const command = parsed.command.trim();
-        const workdir = command.toLowerCase() === "git" && getGitOperation(parsed.args) === "clone"
-            ? "/workspace"
-            : parsed.workdir;
-        const cloneValidation = command.toLowerCase() === "git" && getGitOperation(parsed.args) === "clone"
-            ? validateSandboxedGitClone(parsed.args)
-            : undefined;
-        if (cloneValidation) {
-            return {
-                success: false,
-                status: "rejected",
-                command,
-                args: parsed.args,
-                workdir,
-                message: cloneValidation,
-            };
-        }
-        const validation = validateCommand(command, parsed.args);
-
-        if (validation === "blocked") {
-            return blockedResponse(command);
-        }
-
-        if (validation === "confirmation_required") {
-            const confirmed = await askForConfirmation(command, parsed.args);
-            if (!confirmed) {
-                return rejectedResponse(command);
+    const execute: Tool = {
+        name: "execute_command",
+        effect: "command",
+        description:
+            "Run an executable in Docker after permission approval. Streams bounded output. Supports /app/subdirectory or /workspace/repo working directories, timeoutMs <=300000, and background:true. Background handles last until REXA exits; poll_process/write_process/stop_process manage them. Checkpoints cover eligible /app text files only.",
+        parameters: schema,
+        execute: async (input, context: ToolExecutionContext = {}) => {
+            const parsed = schema.parse(input);
+            if (
+                !context.approved &&
+                !(await permissions.authorize(execute, parsed))
+            ) {
+                return { success: false, status: "rejected" };
             }
-        }
-
-        try {
-            // The terminal command guardrail (blocked / safe / confirmation) has
-            // already run above. Delegating the actual Docker execution to the
-            // shared ExecutionManager:
-            //  - It only starts the sandbox when Compose reports it down,
-            //  - runs the command with `docker compose exec -T sandbox ...`,
-            //  - enforces a hard timeout and kills the process on timeout,
-            //  - and does NOT stop the sandbox after this single command (it is
-            //    torn down once by the Agent when the task finishes).
-            const result = await sandboxManager.execute({
-                command,
-                args: parsed.args,
-                timeoutMs: parsed.timeoutMs,
-                workdir,
-            });
-
-            return {
-                success: result.success,
-                status: result.status,
-                command,
-                args: parsed.args,
-                exitCode: result.exitCode,
-                stdout: result.stdout,
-                stderr: result.stderr,
-                workdir: result.workdir,
-                hint:
-                    result.status === "timeout"
-                        ? "The command was killed because it exceeded the execution timeout. " +
-                          "If a longer run is genuinely required, retry with an explicit timeoutMs and keep it within bounds."
-                        : undefined,
-            };
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const looksLikeMissingBinary = /ENOENT|not recognized|not found|no such file/i.test(message);
-
-            return {
-                success: false,
-                status: "failed" as const,
-                command,
-                args: parsed.args,
-                exitCode: null,
-                stdout: "",
-                stderr: message,
-                hint: looksLikeMissingBinary
-                    ? `"${command}" was not found as an executable on this system. If you were trying to ` +
-                      `inspect files or directories, use find_file / read_file / read_multiple_files / ` +
-                      `read_directory / list_files instead of a shell command.`
-                    : undefined,
-            };
-        }
-    },
-};
+            if (
+                parsed.command === "git" &&
+                getGitOperation(parsed.args) === "clone"
+            ) {
+                const error = validateSandboxedGitClone(parsed.args);
+                if (error) {
+                    return { success: false, status: "rejected", error };
+                }
+                parsed.workdir = "/workspace";
+            }
+            context.signal?.throwIfAborted();
+            const checkpoint = parsed.workdir.startsWith("/app")
+                ? await checkpoints.beginCommand()
+                : undefined;
+            try {
+                const started = await manager.start(parsed, context);
+                const completion = completeCommand(started.id, checkpoint);
+                completions.set(started.id, completion);
+                // Attach a rejection handler immediately even when the caller chooses background mode.
+                void completion.catch(() => {});
+                if (parsed.background) {
+                    return {
+                        success: true,
+                        status: "running",
+                        id: started.id,
+                        checkpoint: checkpoint?.id,
+                        timeoutMs: parsed.timeoutMs,
+                    };
+                }
+                return await completion;
+            } catch (error) {
+                // A failed launch may still have touched files; close its snapshot if possible.
+                if (checkpoint && checkpoint.status === "recording") {
+                    await checkpoints.finishCommand(checkpoint);
+                }
+                throw error;
+            }
+        },
+    };
+    return [
+        execute,
+        {
+            name: "poll_process",
+            effect: "read",
+            description:
+                "Inspect a background process handle and its bounded output. Completed processes also report command checkpoint results.",
+            parameters: idSchema,
+            execute: async (input) => {
+                const { id } = idSchema.parse(input);
+                const state = manager.processes.poll(id);
+                if (state.status === "running") {
+                    return state;
+                }
+                return (await completions.get(id)) ?? state;
+            },
+        },
+        {
+            name: "write_process",
+            effect: "command",
+            description: "Send text to a running background process's stdin.",
+            parameters: writeSchema,
+            execute: async (input) => {
+                const request = writeSchema.parse(input);
+                await manager.processes.write(request.id, request.input);
+                return { success: true };
+            },
+        },
+        {
+            name: "stop_process",
+            effect: "command",
+            description:
+                "Stop an owned background process and its container process group.",
+            parameters: idSchema,
+            execute: async (input) => {
+                const { id } = idSchema.parse(input);
+                const result = await manager.processes.stop(id);
+                return (await completions.get(id)) ?? result;
+            },
+        },
+    ];
+}
+export const defaultExecutionTools = executionTools();
+export const executeCommand = defaultExecutionTools[0]!;

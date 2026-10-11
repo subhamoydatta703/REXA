@@ -9,6 +9,6 @@ export interface LLMProvider {
         tools?: Tool[],
         systemInstruction?: string,
         memorySearchInstruction?: string,
-        callbacks?: Pick<RunCallbacks, "onToken">,
+        callbacks?: Pick<RunCallbacks, "onToken" | "signal">,
     ): Promise<LLMResponse>;
 }

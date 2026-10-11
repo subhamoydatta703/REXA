@@ -4,7 +4,8 @@ import { Agent } from "./agent/Agent";
 import { CLI } from "./cli/AgentCLI";
 import { GeminiProvider } from "./providers/GeminiProvider";
 import { codeTool, codingContextTool } from "./tools/CodingTools";
-import { executeCommand } from "./tools/executeTools";
+import { defaultExecutionTools } from "./tools/executeTools";
+import { sandboxManager } from "./tools/ExecutionManager";
 import { getProjectTree } from "./tools/FileTools";
 import { gitCommand } from "./tools/GitTools";
 import { search } from "./tools/SearchTool";
@@ -16,6 +17,11 @@ import { InputGuardrails } from "./guardrails/input/InputGuardrails";
 
 import { saveMemory, searchMemory } from "./tools/MemoryTools";
 import { ToolRegistry } from "./tools/ToolRegistry";
+import { repositoryTools } from "./tools/RepositoryTools";
+import { editor } from "./tools/SafeEditor";
+import { SessionStore } from "./sessions/SessionStore";
+import { LocalCommands } from "./cli/LocalCommands";
+import { PermissionService, setPermissions } from "./tools/PermissionService";
 import { ConfigManager } from "./config/ConfigManager";
 
 import { password } from "@inquirer/prompts";
@@ -28,13 +34,26 @@ async function main() {
         .name("rexa")
         .description("REXA AI Agent CLI")
         .version("2.0.0")
+        .option(
+            "--continue",
+            "Resume the latest saved conversation in this project",
+        )
+        .option("--resume <id>", "Resume a saved conversation by ID")
         .option("-m, --max-steps <number>", "Max steps per task", "60")
         .option("-n, --name <string>", "Agent name", "REXA")
-        .option("-k, --set-key [string]", "Set or update Gemini API key (masked input if omitted)")
-        .option("-t, --set-tavily-key [string]", "Set or update optional Tavily Search API key (masked input if omitted)");
+        .option(
+            "-k, --set-key [string]",
+            "Set or update Gemini API key (masked input if omitted)",
+        )
+        .option(
+            "-t, --set-tavily-key [string]",
+            "Set or update optional Tavily Search API key (masked input if omitted)",
+        );
 
     // Subcommand: rexa config set-key [key]
-    const configCmd = program.command("config").description("Manage REXA CLI configuration");
+    const configCmd = program
+        .command("config")
+        .description("Manage REXA CLI configuration");
     configCmd
         .command("set-key [key]")
         .description("Set or update your Gemini API key securely")
@@ -42,7 +61,9 @@ async function main() {
             if (!key || typeof key !== "string" || !key.trim()) {
                 try {
                     key = await password({
-                        message: chalk.bold.yellow("  ❯ Enter your Gemini API Key:"),
+                        message: chalk.bold.yellow(
+                            "  ❯ Enter your Gemini API Key:",
+                        ),
                         mask: "*",
                     });
                 } catch {
@@ -79,7 +100,9 @@ async function main() {
             if (!key || typeof key !== "string" || !key.trim()) {
                 try {
                     key = await password({
-                        message: chalk.bold.yellow("  ❯ Enter your Tavily Search API Key:"),
+                        message: chalk.bold.yellow(
+                            "  ❯ Enter your Tavily Search API Key:",
+                        ),
                         mask: "*",
                     });
                 } catch {
@@ -94,12 +117,19 @@ async function main() {
 
     configCmd
         .command("set-brightdata-key")
-        .description("Save the Bright Data API key for LinkedIn profile extraction")
+        .description(
+            "Save the Bright Data API key for LinkedIn profile extraction",
+        )
         .action(async () => {
             let key: string;
             try {
-                key = await password({ message: "Enter your Bright Data API key:", mask: "*" });
-            } catch { process.exit(0); }
+                key = await password({
+                    message: "Enter your Bright Data API key:",
+                    mask: "*",
+                });
+            } catch {
+                process.exit(0);
+            }
             await ConfigManager.setBrightDataApiKey(key);
             process.exit(0);
         });
@@ -107,11 +137,14 @@ async function main() {
     // Default action when running 'rexa' (starting the interactive CLI agent)
     program.action(async (options) => {
         if (options.setKey) {
-            let key = typeof options.setKey === "string" ? options.setKey : undefined;
+            let key =
+                typeof options.setKey === "string" ? options.setKey : undefined;
             if (!key) {
                 try {
                     key = await password({
-                        message: chalk.bold.yellow("  ❯ Enter your Gemini API Key:"),
+                        message: chalk.bold.yellow(
+                            "  ❯ Enter your Gemini API Key:",
+                        ),
                         mask: "*",
                     });
                 } catch {
@@ -125,11 +158,16 @@ async function main() {
         }
 
         if (options.setTavilyKey) {
-            let key = typeof options.setTavilyKey === "string" ? options.setTavilyKey : undefined;
+            let key =
+                typeof options.setTavilyKey === "string"
+                    ? options.setTavilyKey
+                    : undefined;
             if (!key) {
                 try {
                     key = await password({
-                        message: chalk.bold.yellow("  ❯ Enter your Tavily Search API Key:"),
+                        message: chalk.bold.yellow(
+                            "  ❯ Enter your Tavily Search API Key:",
+                        ),
                         mask: "*",
                     });
                 } catch {
@@ -151,11 +189,13 @@ async function main() {
         // Initialize Agent
         const llm = new GeminiProvider(apiKey);
         const toolRegistry = new ToolRegistry();
+        setPermissions(await PermissionService.load());
         toolRegistry.registerTool(gitCommand);
-        toolRegistry.registerTool(codingContextTool);
-        toolRegistry.registerTool(codeTool);
-        toolRegistry.registerTool(executeCommand);
-        toolRegistry.registerTool(getProjectTree);
+        for (const tool of repositoryTools()) toolRegistry.registerTool(tool);
+        await editor.checkpoints.recover();
+        toolRegistry.registerTool(editor.tool());
+        for (const tool of defaultExecutionTools)
+            toolRegistry.registerTool(tool);
         toolRegistry.registerTool(search);
         toolRegistry.registerTool(readUrl);
         toolRegistry.registerTool(saveMemory);
@@ -167,7 +207,7 @@ async function main() {
             parseInt(options.maxSteps, 10),
             options.name,
             undefined,
-            apiKey
+            apiKey,
         );
 
         const researchAgent = new ResearchAgent(
@@ -178,6 +218,10 @@ async function main() {
             undefined,
             apiKey,
         );
+        agent.enableSessions(new SessionStore());
+        let initialMode: "plan" | "act" = "act";
+        if (options.continue || options.resume)
+            initialMode = (await agent.resumeSession(options.resume)).mode;
         const orchestrator = new Orchestrator(
             new Supervisor(apiKey),
             researchAgent,
@@ -185,8 +229,17 @@ async function main() {
             new InputGuardrails(apiKey),
         );
 
-        const cli = new CLI(orchestrator);
-        await cli.start();
+        const cli = new CLI(
+            orchestrator,
+            new LocalCommands(agent, editor.checkpoints),
+            initialMode,
+        );
+        try {
+            await cli.start();
+        } finally {
+            await sandboxManager.stop();
+            await agent.closeSession();
+        }
     });
 
     await program.parseAsync(process.argv);

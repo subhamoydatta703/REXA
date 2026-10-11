@@ -17,6 +17,7 @@ RUN apt-get update \
 # Create non-root sandbox user
 RUN useradd -m -u 1000 -s /bin/bash sandbox
 RUN mkdir -p /workspace && chown -R sandbox:sandbox /workspace
+COPY src/tools/sandbox-supervisor.ts /opt/rexa/sandbox-supervisor.ts
 
 USER sandbox
 # Configure Git to trust the mounted workspace directory

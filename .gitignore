@@ -59,4 +59,6 @@ Desktop.ini
 tests/*
 !tests/web/
 !tests/browser/
+!tests/core/
+!tests/docker/
 media/
