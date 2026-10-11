@@ -402,6 +402,7 @@ REXA features an explicit, account-backed memory architecture:
 - **Repository discovery**: `rg` (ripgrep) on the host PATH.
 - **Containerization**: [Docker Desktop](https://www.docker.com/) running locally for command execution isolation.
 - **API key**: An active Google Gemini API key.
+- **Optional search provider**: A Tavily API key for Tavily search and extraction fallback. Without it, search uses DuckDuckGo.
 - **Optional LinkedIn extraction**: A Bright Data account API token with access to the LinkedIn Profiles scraper and available credits.
 
 ### Global installation
@@ -439,6 +440,28 @@ bun link
 
 REXA prioritizes secure credential storage. Sensitive values are stored in the operating system's native credential vault (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux) via `keytar`, with encrypted fallback files using AES-256-GCM.
 
+### Optional API-key setup
+
+On interactive startup, after account authentication and required Gemini setup, Rexa offers optional Tavily and Bright Data setup for providers without an existing key or a completed setup decision. Package installation does not ask for these keys. Noninteractive execution skips the optional questions.
+
+| Provider | Benefit | Without a key |
+| :--- | :--- | :--- |
+| Tavily | Tavily web search and page-extraction fallback. | Web search uses DuckDuckGo; Tavily extraction is unavailable. |
+| Bright Data | Structured LinkedIn personal-profile extraction, subject to provider access and credits. | Personal-profile extraction reports that configuration is required. Ordinary page reading remains available for supported pages. |
+
+Each question labels the key **Optional**, explains the benefit, and asks:
+
+```text
+Would you like to enter a Tavily API key? [Y/N]:
+Would you like to enter a Bright Data API key? [Y/N]:
+```
+
+Enter uppercase `Y` or `N`, then press Enter. `Y` opens masked key entry; `N` skips key entry. Empty responses, lowercase letters, and other answers are rejected. There is no default answer.
+
+Rexa remembers an explicit `N` or a successfully saved key's setup completion independently for each provider in `~/.rexa/config.json`. Existing environment or saved keys skip the corresponding prompt. You can add or replace keys later with the commands below. Empty or cancelled key entry does not save a key or complete setup; saving failures report a message and do not block startup. If saving the setup decision fails, Rexa warns that the question may appear again.
+
+Setup stores keys without making a provider API call to validate them. Provider errors, access limits, and credit requirements are reported when the feature is used.
+
 ### CLI commands
 
 ```bash
@@ -454,7 +477,7 @@ rexa config set-key
 # Store an optional Tavily Search API key
 rexa config set-tavily-key
 
-# Store your Bright Data account API token for LinkedIn profile extraction
+# Store an optional Bright Data account API token for LinkedIn profile extraction
 rexa config set-brightdata-key
 
 # Launch REXA with customized step limits
@@ -494,6 +517,7 @@ Environment variables take precedence over credentials stored in the local vault
 | `GEMINI_GUARD_API_KEY` | Dedicated API key for guardrail evaluations (falls back to `GEMINI_API_KEY`). |
 | `GEMINI_STREAMING_API_KEY` | Dedicated API key for streaming operations (falls back to `GEMINI_API_KEY`). |
 | `TVLY_API_KEY` | Optional Tavily search key for enhanced research queries. |
+| `TAVILY_API_KEY` | Alternate Tavily key variable; `TVLY_API_KEY` takes precedence when both are set. |
 | `BRIGHTDATA_API_KEY` | Bright Data account API token for LinkedIn personal profile extraction; overrides the saved token. Browser API connection credentials are not accepted. |
 | `REXA_CLI_TOKEN` | Overrides the authenticated CLI web token. |
 | `REXA_WORKSPACE` | Overrides the host directory mounted inside `/app` in Docker (defaults to `process.cwd()`). |

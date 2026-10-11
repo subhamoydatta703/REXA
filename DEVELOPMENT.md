@@ -39,6 +39,7 @@ Research cancellation is checked before work and between calls, and forwarded to
 | Startup           | `src/index.ts`                                                                        | Configure providers, register tools, open session storage, and start the CLI.                                   |
 | Terminal          | `src/cli/AgentCLI.ts`                                                                 | Read prompts, handle local commands, display output, and cancel a task with Ctrl+C.                             |
 | Local commands    | `src/cli/LocalCommands.ts`                                                            | Handle `/resume`, `/continue`, `/diff`, `/undo`, and process commands without sending them to the model.        |
+| Optional API setup | `src/cli/OptionalApiSetup.ts` | Explain optional providers, require explicit Y/N input, and request masked keys only after Y. |
 | Routing           | `src/orchestration/Orchestrator.ts`                                                   | Route a request to a direct response, the main agent, or research.                                              |
 | Agent loop        | `src/agent/Agent.ts`                                                                  | Generate a response, review proposed tool calls, execute them, record results, and validate the final response. |
 | Tool boundary     | `src/tools/ToolDispatcher.ts`                                                         | Enforce plan/act restrictions, validate arguments, and request permission before execution.                     |
@@ -55,6 +56,10 @@ Research cancellation is checked before work and between calls, and forwarded to
 The original exports of `sanitizeStored`, `recoverInterruptedMessages`, and `workspaceDataDirectory` remain available from their previous modules for compatibility. New production callers import these functions from their focused modules.
 
 ## Follow one tool call
+
+Before the chat starts, `src/index.ts` completes required authentication and Gemini setup, then calls `runOptionalApiSetup()`. The optional setup module returns immediately unless both standard input and output are TTYs. Existing keys or completed provider decisions suppress the matching question. Explicit config commands do not go through onboarding.
+
+`ConfigManager` stores independent `optionalApiSetup` completion flags alongside encrypted credentials in the user configuration. A skip is recorded only after N; a key's setup is completed only after its setter succeeds. Cancellation, empty keys, and storage failures leave that provider incomplete. Tavily and Bright Data setters accept storage success in the OS vault or encrypted file, and throw if both fail. This verifies storage, not provider authentication.
 
 1. The provider returns a tool name and arguments to `Agent.run()`.
 2. The agent records the model turn before executing its calls.
@@ -115,6 +120,8 @@ git diff --check
 ```
 
 Core tests exercise repository reads, permissions, editing, processes, planning, and sessions. Web tests use fixtures and mocked providers. Browser tests require the installed Chromium runtime. Docker tests require a running Docker daemon and build the sandbox image; the command fixtures include Python programs to check child-process cleanup and stdin.
+
+`tests/core/optional-api-setup.test.ts` uses injected prompts and storage to cover strict Y/N validation, skip/entry decisions, independent provider state, cancellation, missing input, failure reporting, and noninteractive behavior. An isolated subprocess with a temporary home and mocked OS vault exercises real encrypted config persistence, environment precedence, and rejected saves without touching developer credentials or paid APIs.
 
 Docker lifecycle tests mount a disposable temporary workspace. On Linux, `mkdtemp` creates that directory with mode `0700`, while the container runs as UID 1000. The fixture explicitly sets mode `0755` so a different CI runner UID does not prevent the sandbox from entering it. This permission change applies only to the generated test directory. An inaccessible command working directory can produce a spawn `EACCES` and supervisor exit code 1 even when the requested executable exists; it does not establish an exit-code propagation bug.
 
