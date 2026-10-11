@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -8,6 +8,9 @@ import { ExecutionManager } from "../../src/tools/ExecutionManager";
 let root: string, manager: ExecutionManager;
 beforeAll(async () => {
     root = await mkdtemp(path.join(tmpdir(), "rexa-docker-"));
+    // Linux mkdtemp creates mode 0700. The container's UID 1000 may differ
+    // from the CI runner's UID, so allow it to traverse this test-only fixture.
+    await chmod(root, 0o755);
     await mkdir(path.join(root, "packages"));
     await writeFile(
         path.join(root, "packages", "fixture.txt"),
