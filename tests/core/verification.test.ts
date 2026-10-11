@@ -535,6 +535,42 @@ test("unknown command tools and unsupported snapshots are unavailable", async ()
     expect(execute).not.toHaveBeenCalled();
 });
 
+test("missing host ripgrep reports the snapshot dependency before any command dispatch", async () => {
+    const emptyPath = path.join(temporary, "empty-path");
+    await mkdir(emptyPath);
+    const moduleUrl = (filename: string) =>
+        JSON.stringify(new URL(`../../src/${filename}`, import.meta.url).href);
+    const script = `
+        import { Workspace } from ${moduleUrl("tools/Workspace.ts")};
+        import { ToolRegistry } from ${moduleUrl("tools/ToolRegistry.ts")};
+        import { ToolDispatcher } from ${moduleUrl("tools/ToolDispatcher.ts")};
+        import { VerificationRunner } from ${moduleUrl("verification/VerificationRunner.ts")};
+        const dispatcher = new ToolDispatcher(new ToolRegistry());
+        let calls = 0;
+        dispatcher.execute = async () => { calls++; throw new Error("Must not execute"); };
+        const results = [];
+        await new VerificationRunner(new Workspace(process.cwd()), dispatcher, {}).run(${JSON.stringify([check])}, results);
+        console.log(JSON.stringify({ result: results[0], calls }));
+    `;
+    // Isolate PATH in a child so other tests keep their normal discovery tools.
+    const child = Bun.spawn([process.execPath, "-e", script], {
+        cwd: workspace.root,
+        env: { ...process.env, PATH: emptyPath, Path: emptyPath },
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+    ]);
+    expect(exitCode, stderr).toBe(0);
+    const observed = JSON.parse(stdout);
+    expect(observed.calls).toBe(0);
+    expect(observed.result.status).toBe("unavailable");
+    expect(observed.result.detail).toContain("ripgrep");
+});
+
 test("documentation-only changes and conversation skip debugging, while explicit testing does not", async () => {
     const debug = mock(async () => submission());
     const docs = await VerificationWorkflow.create(

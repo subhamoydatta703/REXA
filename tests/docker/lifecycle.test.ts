@@ -231,7 +231,7 @@ test("verification checks use Docker commands and report real pass/fail exit cod
     ];
     const before: CheckResult[] = [];
     await runner.run(checks, before);
-    expect(before[0]?.status).toBe("passed");
+    expect(before[0]?.status, JSON.stringify(before[0])).toBe("passed");
     try {
         await writeFile(
             path.join(root, "packages", "fixture.txt"),
@@ -239,7 +239,7 @@ test("verification checks use Docker commands and report real pass/fail exit cod
         );
         const after: CheckResult[] = [];
         await runner.run(checks, after);
-        expect(after[0]?.status).toBe("failed");
+        expect(after[0]?.status, JSON.stringify(after[0])).toBe("failed");
         expect(after[0]?.exitCode).toBe(1);
     } finally {
         await writeFile(

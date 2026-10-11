@@ -187,14 +187,17 @@ export class VerificationRunner {
                 this.workspace,
                 this.context.signal,
             );
-        } catch {
+        } catch (error) {
             this.context.signal?.throwIfAborted();
+            const reason = sanitizeStored(
+                error instanceof Error ? error.message : String(error),
+            ).slice(0, 2000);
             results.push(
                 ...checks.map((check) =>
                     resultRecord(
                         check,
                         "unavailable",
-                        "Could not establish a bounded workspace snapshot.",
+                        `Could not establish a bounded workspace snapshot: ${reason}`,
                     ),
                 ),
             );
@@ -320,11 +323,14 @@ export class VerificationRunner {
                     this.workspace,
                     this.context.signal,
                 );
-            } catch {
+            } catch (error) {
                 this.context.signal?.throwIfAborted();
+                const reason = sanitizeStored(
+                    error instanceof Error ? error.message : String(error),
+                ).slice(0, 2000);
                 this.invalidate(
                     results,
-                    "Workspace stability could not be confirmed after checks.",
+                    `Workspace stability could not be confirmed after checks: ${reason}`,
                 );
                 return;
             }
