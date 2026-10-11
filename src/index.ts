@@ -221,6 +221,7 @@ async function main() {
             apiKey,
         );
         agent.enableSessions(new SessionStore());
+        agent.enableVerification(editor.ws);
         let initialMode: "plan" | "act" = "act";
         if (options.continue || options.resume)
             initialMode = (await agent.resumeSession(options.resume)).mode;

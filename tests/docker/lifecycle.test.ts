@@ -4,6 +4,14 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { ExecutionManager } from "../../src/tools/ExecutionManager";
+import { executionTools } from "../../src/tools/executeTools";
+import { Workspace } from "../../src/tools/Workspace";
+import { CheckpointStore } from "../../src/tools/CheckpointStore";
+import { ToolRegistry } from "../../src/tools/ToolRegistry";
+import { ToolDispatcher } from "../../src/tools/ToolDispatcher";
+import { PermissionService } from "../../src/tools/PermissionService";
+import { VerificationRunner } from "../../src/verification/VerificationRunner";
+import type { CheckResult } from "../../src/verification/VerificationResults";
 
 let root: string, manager: ExecutionManager;
 beforeAll(async () => {
@@ -192,4 +200,51 @@ test("background stdin can be written and processes can be stopped", async () =>
     });
     expect(manager.processes.poll(server.id).status).toBe("running");
     expect((await manager.processes.stop(server.id)).status).toBe("cancelled");
+}, 30_000);
+
+test("verification checks use Docker commands and report real pass/fail exit codes", async () => {
+    const workspace = new Workspace(root);
+    const checkpoints = new CheckpointStore(
+        workspace,
+        path.join(root, ".rexa", "verification-checkpoints"),
+    );
+    const registry = new ToolRegistry();
+    for (const tool of executionTools(manager, checkpoints)) {
+        registry.registerTool(tool);
+    }
+    const dispatcher = new ToolDispatcher(
+        registry,
+        new PermissionService([{ effect: "command", action: "allow" }]),
+    );
+    const runner = new VerificationRunner(workspace, dispatcher, {});
+    const checks = [
+        {
+            name: "workspace fixture",
+            command: "python3",
+            args: [
+                "-c",
+                "import pathlib,sys; sys.exit(0 if pathlib.Path('packages/fixture.txt').read_text() == 'mounted workspace' else 1)",
+            ],
+            directory: ".",
+            timeoutMs: 10_000,
+        },
+    ];
+    const before: CheckResult[] = [];
+    await runner.run(checks, before);
+    expect(before[0]?.status).toBe("passed");
+    try {
+        await writeFile(
+            path.join(root, "packages", "fixture.txt"),
+            "incorrect value",
+        );
+        const after: CheckResult[] = [];
+        await runner.run(checks, after);
+        expect(after[0]?.status).toBe("failed");
+        expect(after[0]?.exitCode).toBe(1);
+    } finally {
+        await writeFile(
+            path.join(root, "packages", "fixture.txt"),
+            "mounted workspace",
+        );
+    }
 }, 30_000);

@@ -6,7 +6,8 @@ const MAX_SUMMARY_CHARACTERS = 12_000;
 function isUserRequest(message: Message): boolean {
     return (
         message.role === "user" &&
-        !message.content?.startsWith("EXTERNAL RESEARCH DATA")
+        !message.content?.startsWith("EXTERNAL RESEARCH DATA") &&
+        !message.content?.startsWith("VERIFICATION RESULTS")
     );
 }
 

@@ -14,6 +14,10 @@ import type { AgentMode } from "../agent/AgentMode";
 import { sanitizeStored } from "../utils/SanitizeStored";
 import { workspaceDataDirectory } from "../utils/WorkspaceData";
 import { acquireFileLease } from "../utils/FileLease";
+import {
+    verificationEvidenceSchema,
+    type VerificationEvidence,
+} from "../verification/VerificationResults";
 
 const messageSchema = z.object({
     role: z.enum(["user", "model", "assistant", "tool"]),
@@ -30,6 +34,7 @@ const recordSchema = z.object({
     mode: z.enum(["plan", "act"]),
     status: z.enum(["idle", "running", "complete", "interrupted"]),
     messages: z.array(messageSchema),
+    verification: verificationEvidenceSchema.optional(),
 });
 export interface SessionRecord {
     version: 1;
@@ -39,6 +44,7 @@ export interface SessionRecord {
     mode: AgentMode;
     status: "idle" | "running" | "complete" | "interrupted";
     messages: Message[];
+    verification?: VerificationEvidence;
 }
 
 // Keep this export for callers using the original module path.
