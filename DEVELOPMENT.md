@@ -121,9 +121,56 @@ Snapshots execute repository discovery on the host before test dispatch. Missing
 
 Startup currently requires REXA account authentication and a Gemini key, then constructs `GeminiProvider`, a Google-backed supervisor, and Google-backed guardrails. The main adapter hardcodes its model. `GeminiConfig.ts` and `GeminiStreaming.ts` do not provide active CLI model or reasoning selection.
 
-`LLMProvider` abstracts generation, but `Message.ts` and `LLMResponse.ts` still import Google's `Part`. The main, research, debugging, and recovery paths build Gemini-style call/result parts. Shared `ToolCall` currently has a name and parameters without a provider-independent call ID. Multiple providers need explicit protocol translation and correlation of repeated tool names, not just another SDK client.
+Cosmos Phase 1 removes Google types from `Message.ts` and `LLMResponse.ts`. Shared messages contain text, `toolCalls`, `toolResults`, and optional provider-tagged `native` continuation data. Each call has an ID, name, and parameters; each result has `callId`, name, and output. Main, research, debugging, recovery, and compaction paths use this format. `assistantMessage()` validates calls before dispatch and `toolResultMessage()` retains their identity.
 
-OpenAI and Anthropic adapters, provider-aware credentials, `/provider`, `/model`, `/reasoning`, a reasoning submenu, and session selection metadata are planned. They are not implemented commands or dependencies. The first planned version uses one validated provider/model/effort selection throughout each task; all model-backed paths, including supervision, guardrails, reflection, and compaction, must follow it. Switching must preserve complete tool cycles and exclude incompatible native continuation data.
+Provider-specific files live under `src/providers/gemini/`, `openai/`, and `claude/`. The provider ID for Claude remains `anthropic`. `gemini/GeminiProtocol.ts` owns Google conversion, preserves signed parts, retains native call IDs, and generates unique internal IDs when Google omits them. Internal IDs are not inserted into signed parts. Results must match IDs/names, native arguments must match shared arguments, and incomplete tool cycles or incompatible provider/model metadata are rejected.
+
+`SessionStore` accepts legacy v1 `parts` records and current shared messages. Legacy conversion happens in memory; later saves append new snapshots without rewriting old records. Old results with IDs are matched by ID. Without IDs, migration consumes matching tool names in order because older records cannot establish a stronger identity. Old records also lack model metadata; new Gemini responses tag the model, while legacy native data retains an unknown model. Cross-provider handoff remains Phase 6 work.
+
+`ProviderSettings.ts` validates selection and capability shapes. `ModelCatalog.ts` checks provider/model/effort combinations and required coding capabilities. Its initial catalog includes Gemini 3.8 Flash, GPT-5, and Claude Sonnet 4.6 with official sources and review dates. Unknown limits/defaults are omitted instead of guessed; `default` means omit the API override. A catalog entry does not establish adapter availability or account access.
+
+The catalog accepts an injected model-list function for future adapters. Discovery is capped at 500 IDs with a 10-second deadline and a 15-minute in-memory cache. Unknown discovered IDs are not promoted into supported models. Refresh failures fall back to cached visibility or verified catalog entries with a warning; user cancellation propagates instead of becoming a fallback. Provider HTTP discovery and menu wiring remain pending.
+
+Phase 2 adds provider-aware credentials and saved preferences through `ConfigManager.ts`, schemas in `ProviderSettings.ts`, and injected setup coordination in `src/cli/ProviderSetup.ts`. `rexa config set-provider-key`, `set-provider`, and `show-provider` are available; `claude` maps to the `anthropic` provider ID. Settings are validated before prompts or writes, missing keys require interactive masked input or an environment variable, and failed preference writes do not replace the selected provider.
+
+Existing encrypted credentials, optional web API choices, and REXA authentication fields survive new saves. Vault reads are independent: a failure reading one account does not discard successful reads of others. A key save must succeed in the vault or encrypted file before it is reported successful. Preferences are ordinary validated data, not encrypted secrets. Key storage and preference storage are separate operations; a successfully stored new key remains available if the later preference save fails.
+
+`SecretScanner.registerCredential()` registers exact loaded/entered provider values for in-process redaction and detection, including keys read from storage without exporting them to environment variables. Existing logging, session, and verification sanitizers reuse it. Opaque provider thought-signature fields retain the existing preservation behavior. Configuration errors use messages that do not echo key values.
+
+Normal startup still uses Gemini. Saved OpenAI/Anthropic selections or unsupported Gemini overrides are rejected before account/key prompts until runtime support is implemented; they never silently fall back to Gemini. Old configurations without selection preferences keep the existing Gemini path.
+
+### Provider preference storage and setup sequence
+
+`providerPreferences` is an ordinary field in the existing config file, alongside separately encrypted credential fields. A preferences-only example is:
+
+```json
+{
+  "providerPreferences": {
+    "active": {
+      "provider": "openai",
+      "model": "gpt-5",
+      "reasoning": "high"
+    },
+    "remembered": {
+      "openai": {
+        "provider": "openai",
+        "model": "gpt-5",
+        "reasoning": "high"
+      }
+    }
+  }
+}
+```
+
+This is not a replacement config file; existing encrypted keys, REXA authentication, and optional setup choices must be retained. The schema rejects unknown preference fields and remembered entries whose provider does not match their key. Missing preferences migrate to an empty remembered map without automatically selecting another provider. These defaults are global configuration, separate from workspace session records.
+
+`ProviderSetup.configure()` resolves the provider alias, reads remembered settings, chooses a model/effort, and validates the complete candidate through `ModelCatalog`. It then checks only that provider's key, prompts if missing and interactive, saves a supplied key, and finally saves preferences. Explicit invalid settings fail before credential operations. No API request is made to authenticate a key. `show-provider` displays persisted data, not account availability or an effective runtime model.
+
+An unsupported remembered effort is reset when a different model is explicitly requested; an invalid explicit effort is rejected. If no model is remembered or supplied, the first verified catalog entry is used, not a dynamically discovered newest model. No active preferences means the existing Gemini startup path. Failed preference persistence leaves the old active selection intact; already stored credentials are not rolled back.
+
+The config commands are available before chat startup. New masked key commands reject noninteractive input/output instead of waiting for hidden input, while `set-provider` can use an existing stored/environment key without prompting. Malformed saved provider preferences raise an explicit error; do not remove all config/credential data to conceal it. Runtime wiring and session-selection precedence remain later work.
+
+OpenAI and Anthropic adapters, `/provider`, `/model`, `/reasoning`, a reasoning submenu, and session selection metadata are planned. They are not implemented commands or dependencies. The first planned version uses one validated provider/model/effort selection throughout each task; all model-backed paths, including supervision, guardrails, reflection, and compaction, must follow it. Switching must preserve complete tool cycles and exclude incompatible native continuation data.
 
 Model strings in source are not an availability catalog. Future menus need verified API identifiers, model-specific supported reasoning settings, defaults, and clear handling of account-access errors. Reasoning effort is not a measurement of intelligence or a correctness guarantee.
 
@@ -193,3 +240,7 @@ Docker lifecycle tests mount a disposable temporary workspace. On Linux, `mkdtem
 `tests/core/verification.test.ts` covers configuration, discovery, permission denial, outcome classification, budgets, stability invalidation, bounded repairs, cancellation persistence, plan restrictions, and session refresh. Its end-to-end agent fixture uses mocked model responses with real Bun tests and the real editor. `tests/docker/lifecycle.test.ts` additionally checks the verification runner through the real Docker command tool with passing and failing Python fixtures. These tests verify mechanics; they do not establish live-model repair quality.
 
 Review the source as well as the tests: confirm that the main path reads in execution order, failure paths are visible, and a helper's name explains why its caller needs it. A passing suite verifies the covered behavior; it does not prove every possible behavior is unchanged.
+
+Phase 1 validation on 2026-10-13 used Bun `1.3.14` on Windows: type checking passed, along with 94 core, 147 web, 9 Docker, and 3 browser tests (253 total). `tests/core/providers.test.ts` adds 12 protocol/catalog cases, including an injected SDK stream, repeated tool names, signed-part preservation, old-session conversion, cancellation, and discovery caching. Core subprocesses were initially denied by the execution sandbox; rerunning the suite outside that sandbox passed. No live-model API calls or GitHub CI run were performed for this change.
+
+Phase 2 validation on the same local runtime passed type checking and 105 core, 147 web, 9 Docker, and 3 browser tests (264 total). Eleven new provider-configuration cases include actual config/CLI subprocesses in temporary homes with mocked OS vaults, migration of existing fields, failed saves, and credential redaction through logging, session storage, and verification reporting. Docker initially could not reach its stopped engine; the installed Docker Desktop was started with approval, then all nine checks passed. No live provider authentication or model calls were made.

@@ -604,6 +604,7 @@ test("debugging agent cannot execute commands directly and requires structured s
             text: "",
             toolcalls: [
                 {
+                    id: "fixture-22150",
                     name: "execute_command",
                     params: { command: "bun", args: ["test"] },
                 },
@@ -613,7 +614,7 @@ test("debugging agent cannot execute commands directly and requires structured s
         {
             role: "assistant",
             text: "",
-            toolcalls: [{ name: "submit_debugging", params: submission() }],
+            toolcalls: [{ id: "fixture-22444", name: "submit_debugging", params: submission() }],
         },
     ];
     const history: unknown[] = [];
@@ -652,7 +653,7 @@ test("debugging agent applies editing permissions", async () => {
         generate: async () => ({
             role: "assistant",
             text: "",
-            toolcalls: [{ name: "code_tool", params: {} }],
+            toolcalls: [{ id: "fixture-23790", name: "code_tool", params: {} }],
         }),
     };
     setPermissions(new PermissionService([{ effect: "edit", action: "deny" }]));
@@ -708,7 +709,7 @@ test("agent writes a real test, repairs source, reruns Bun tests, persists evide
     ): LLMResponse => ({
         role: "assistant",
         text: "",
-        toolcalls: [{ name, params }],
+        toolcalls: [{ id: "fixture-26026", name, params }],
     });
     const testCode =
         'import { test, expect } from "bun:test"; import { handleRequest } from "./routes"; test("wrong passwords are rejected", () => expect(handleRequest(new Request("https://fixture.test/profile", { headers: { password: "wrong" } })).status).toBe(401)); test("correct passwords work", () => expect(handleRequest(new Request("https://fixture.test/profile", { headers: { password: "correct" } })).status).toBe(200));';
@@ -903,7 +904,7 @@ test("debugging model cancellation is forwarded and shared recovery context reac
                 return {
                     role: "assistant",
                     text: "",
-                    toolcalls: [{ name: "code_tool", params: {} }],
+                    toolcalls: [{ id: "fixture-33473", name: "code_tool", params: {} }],
                 };
             controller.abort(new Error("cancel debugging"));
             throw controller.signal.reason;
@@ -955,7 +956,7 @@ test("final reporting invalidates a pass when user code changes during output va
         {
             role: "assistant",
             text: "",
-            toolcalls: [{ name: "submit_debugging", params: submission() }],
+            toolcalls: [{ id: "fixture-35268", name: "submit_debugging", params: submission() }],
         },
     ];
     const agent = fixtureAgent(

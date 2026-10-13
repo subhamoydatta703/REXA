@@ -10,6 +10,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Message } from "../agent/Message";
+import { messageSchema } from "../agent/Message";
+import { legacyGeminiMessageSchema, migrateLegacyMessages } from "../providers/gemini/GeminiProtocol";
 import type { AgentMode } from "../agent/AgentMode";
 import { sanitizeStored } from "../utils/SanitizeStored";
 import { workspaceDataDirectory } from "../utils/WorkspaceData";
@@ -19,13 +21,6 @@ import {
     type VerificationEvidence,
 } from "../verification/VerificationResults";
 
-const messageSchema = z.object({
-    role: z.enum(["user", "model", "assistant", "tool"]),
-    content: z.string().optional(),
-    parts: z.array(z.record(z.string(), z.unknown())).optional(),
-    agentName: z.string().optional(),
-    runID: z.string().optional(),
-});
 const recordSchema = z.object({
     version: z.literal(1),
     id: z.string().uuid(),
@@ -33,7 +28,7 @@ const recordSchema = z.object({
     updatedAt: z.string(),
     mode: z.enum(["plan", "act"]),
     status: z.enum(["idle", "running", "complete", "interrupted"]),
-    messages: z.array(messageSchema),
+    messages: z.array(z.union([messageSchema, legacyGeminiMessageSchema])),
     verification: verificationEvidenceSchema.optional(),
 });
 export interface SessionRecord {
@@ -135,7 +130,7 @@ export class SessionStore {
         if (latest.workspace !== this.workspace || latest.id !== id) {
             throw new Error("Session workspace or ID mismatch.");
         }
-        return latest;
+        return { ...latest, messages: migrateLegacyMessages(latest.messages) };
     }
 
     async list() {

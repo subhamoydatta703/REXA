@@ -78,10 +78,12 @@ describe("research execution controls", () => {
                             text: "",
                             toolcalls: [
                                 {
+                                    id: "fixture-3088",
                                     name: "search",
                                     params: { query: "fixture" },
                                 },
                                 {
+                                    id: "fixture-3275",
                                     name: "read_url",
                                     params: { url: "https://example.com" },
                                 },
@@ -110,7 +112,7 @@ describe("research execution controls", () => {
                               role: "model",
                               text: "",
                               toolcalls: [
-                                  { name: "read_url", params: { url: 123 } },
+                                  { id: "fixture-4362", name: "read_url", params: { url: 123 } },
                               ],
                           }
                         : answer,
@@ -174,7 +176,7 @@ describe("research execution controls", () => {
                         role: "model",
                         text: "",
                         toolcalls: [
-                            { name: "search", params: { query: "fixture" } },
+                            { id: "fixture-6923", name: "search", params: { query: "fixture" } },
                         ],
                     };
                 },
@@ -194,8 +196,8 @@ describe("research execution controls", () => {
             role: "model",
             text: "",
             toolcalls: [
-                { name: "search", params: { query: "fixture" } },
-                { name: "read_url", params: { url: "https://example.com" } },
+                { id: "fixture-7642", name: "search", params: { query: "fixture" } },
+                { id: "fixture-7708", name: "read_url", params: { url: "https://example.com" } },
             ],
         }));
         const agent = researchAgent({ generate }, [

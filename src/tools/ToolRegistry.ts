@@ -34,7 +34,10 @@ export class ToolRegistry {
     }
 }
 
-export interface ToolCall {
-    name: string;
-    params: Record<string, unknown>;
-}
+export const toolCallSchema = z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    params: z.record(z.string(), z.unknown()),
+}).strict();
+
+export type ToolCall = z.infer<typeof toolCallSchema>;

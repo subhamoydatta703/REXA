@@ -1,5 +1,5 @@
-import type { Message } from "../agent/Message";
-import type { LLMProvider } from "../providers/LLMProvider";
+import type { Message } from "../../agent/Message";
+import type { LLMProvider } from "../LLMProvider";
 
 import {
     ApiError,
@@ -7,26 +7,25 @@ import {
     GoogleGenAI,
     type Part,
 } from "@google/genai";
-import type { LLMResponse } from "../providers/LLMResponse";
-import type { Tool } from "../tools/ToolRegistry";
+import type { LLMResponse } from "../LLMResponse";
+import type { Tool } from "../../tools/ToolRegistry";
 import * as z from "zod";
-import { logger } from "../logger/AgentLogger";
-import type { RunCallbacks } from "../agent/RunCallbacks";
+import type { RunCallbacks } from "../../agent/RunCallbacks";
+import {
+    DEFAULT_GEMINI_MODEL,
+    geminiContents,
+    geminiResponse,
+} from "./GeminiProtocol";
 
-interface GeminiErrorDetails {
-    "@type": string;
-    reason?: string;
-    domain?: string;
-    retryDelay?: string;
-    violations?: unknown[];
-    links?: Array<{ description: string; url: string }>;
+interface GeminiClient {
+    models: Pick<GoogleGenAI["models"], "generateContentStream">;
 }
 
 export class GeminiProvider implements LLMProvider {
-    private client: GoogleGenAI;
+    private client: GeminiClient;
 
-    constructor(apikey: string) {
-        this.client = new GoogleGenAI({ apiKey: apikey });
+    constructor(apikey: string, client?: GeminiClient) {
+        this.client = client ?? new GoogleGenAI({ apiKey: apikey });
     }
 
     async generate(
@@ -43,27 +42,10 @@ export class GeminiProvider implements LLMProvider {
                 parametersJsonSchema: z.toJSONSchema(tool.parameters),
             }));
 
-            const contents = messages.map((msg) => {
-                if (msg.parts) {
-                    return {
-                        role:
-                            msg.role === "assistant"
-                                ? "model"
-                                : msg.role === "tool"
-                                  ? "user"
-                                  : msg.role,
-                        parts: msg.parts,
-                    };
-                }
-
-                return {
-                    role: msg.role === "assistant" ? "model" : "user",
-                    parts: [{ text: msg.content || "" }],
-                };
-            });
+            const contents = geminiContents(messages, DEFAULT_GEMINI_MODEL);
 
             const stream = await this.client.models.generateContentStream({
-                model: "gemini-3.8-flash",
+                model: DEFAULT_GEMINI_MODEL,
                 contents,
                 config: {
                     abortSignal: callbacks?.signal,
@@ -82,33 +64,13 @@ export class GeminiProvider implements LLMProvider {
             });
 
             const parts: Part[] = [];
-            const functionCalls: NonNullable<LLMResponse["toolcalls"]> = [];
             let extractedText = "";
-            let hasFunctionCalls = false;
 
             for await (const chunk of stream) {
                 const chunkParts = chunk.candidates?.[0]?.content?.parts ?? [];
                 parts.push(...chunkParts);
 
                 const chunkCalls = chunk.functionCalls ?? [];
-                if (chunkCalls.length > 0) {
-                    hasFunctionCalls = true;
-                    functionCalls.push(
-                        ...chunkCalls
-                            .filter(
-                                (
-                                    call,
-                                ): call is typeof call & { name: string } =>
-                                    Boolean(call.name),
-                            )
-                            .map((call) => ({
-                                name: call.name,
-                                params:
-                                    (call.args as Record<string, unknown>) ||
-                                    {},
-                            })),
-                    );
-                }
 
                 const chunkText = chunk.text ?? "";
                 extractedText += chunkText;
@@ -127,12 +89,7 @@ export class GeminiProvider implements LLMProvider {
                 }
             }
 
-            return {
-                role: "assistant",
-                text: extractedText,
-                rawParts: parts,
-                toolcalls: functionCalls,
-            };
+            return geminiResponse(parts, extractedText, DEFAULT_GEMINI_MODEL);
         } catch (error) {
             if (error instanceof ApiError) {
                 console.log("Gemini API Error");

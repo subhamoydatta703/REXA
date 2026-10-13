@@ -323,7 +323,7 @@ test("recovery reads and limits use the real file behind directory symlinks", as
 
 function latestToolResult(messages: Message[]): Record<string, unknown> {
     const message = messages.at(-1);
-    const result = message?.parts?.[0]?.functionResponse?.response?.result;
+    const result = message?.toolResults?.[0]?.output.result;
     if (!result || typeof result !== "object")
         throw new Error("Expected a structured tool result");
     return result as Record<string, unknown>;
@@ -381,7 +381,7 @@ test("agent persists the failure, reads again, revises the edit, and runs a real
                     return {
                         role: "model",
                         text: "",
-                        toolcalls: [{ name: "code_tool", params: editCount }],
+                        toolcalls: [{ id: "fixture-14781", name: "code_tool", params: editCount }],
                     };
                 case 1: {
                     expect(latestToolResult(messages).code).toBe("STALE_FILE");
@@ -393,7 +393,7 @@ test("agent persists the failure, reads again, revises the edit, and runs a real
                         role: "model",
                         text: "",
                         toolcalls: [
-                            { name: "read_file", params: { path: "a.ts" } },
+                            { id: "fixture-15323", name: "read_file", params: { path: "a.ts" } },
                         ],
                     };
                 }
@@ -409,6 +409,7 @@ test("agent persists the failure, reads again, revises the edit, and runs a real
                         text: "",
                         toolcalls: [
                             {
+                                id: "fixture-15912",
                                 name: "code_tool",
                                 params: {
                                     ...editCount,
@@ -430,6 +431,7 @@ test("agent persists the failure, reads again, revises the edit, and runs a real
                         text: "",
                         toolcalls: [
                             {
+                                id: "fixture-16804",
                                 name: "execute_command",
                                 params: { args: ["test"] },
                             },
@@ -477,7 +479,7 @@ test("cancelling after a stale result stops recovery and saves an interrupted se
                 return {
                     role: "model",
                     text: "",
-                    toolcalls: [{ name: "code_tool", params: editCount }],
+                    toolcalls: [{ id: "fixture-18650", name: "code_tool", params: editCount }],
                 };
             }
             expect(latestToolResult(messages).code).toBe("STALE_FILE");
@@ -485,7 +487,7 @@ test("cancelling after a stale result stops recovery and saves an interrupted se
             return {
                 role: "model",
                 text: "",
-                toolcalls: [{ name: "read_file", params: { path: "a.ts" } }],
+                toolcalls: [{ id: "fixture-18977", name: "read_file", params: { path: "a.ts" } }],
             };
         },
     };
@@ -523,7 +525,7 @@ test("unresolved conflicts appear in the final response; permission denial still
                     return {
                         role: "model",
                         text: "",
-                        toolcalls: [{ name: "code_tool", params: editCount }],
+                        toolcalls: [{ id: "fixture-20408", name: "code_tool", params: editCount }],
                     };
                 return {
                     role: "assistant",

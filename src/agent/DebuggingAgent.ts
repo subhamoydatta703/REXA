@@ -1,5 +1,6 @@
 import type { LLMProvider } from "../providers/LLMProvider";
 import type { Message } from "./Message";
+import { assistantMessage, toolResultMessage } from "./Message";
 import {
     ToolRegistry,
     type ToolExecutionContext,
@@ -126,14 +127,7 @@ export class DebuggingAgent implements DebuggingService {
                 await this.options.onMessage(reminder);
                 continue;
             }
-            const turn: Message = {
-                role: "model",
-                parts:
-                    response.rawParts ??
-                    response.toolcalls.map((call) => ({
-                        functionCall: { name: call.name, args: call.params },
-                    })),
-            };
+            const turn = assistantMessage(response);
             messages.push(turn);
             await this.options.onMessage(turn);
             let submission: DebuggingSubmission | undefined;
@@ -204,17 +198,7 @@ export class DebuggingAgent implements DebuggingService {
                               preview: serialized.slice(0, 24000),
                           }
                         : sanitizeStored(result);
-                const reply: Message = {
-                    role: "tool",
-                    parts: [
-                        {
-                            functionResponse: {
-                                name: call.name,
-                                response: { result: bounded },
-                            },
-                        },
-                    ],
-                };
+                const reply = toolResultMessage(call, { result: bounded });
                 messages.push(reply);
                 await this.options.onMessage(reply);
             }
