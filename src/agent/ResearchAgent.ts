@@ -6,6 +6,7 @@ import { OutputGuardrails } from "../guardrails/output/OutputGuardrails";
 import { ResearchAgentPrompt } from "./ReseatchAgentSystemPrompt";
 import type { LLMResponse } from "../providers/LLMResponse";
 import type { ResearchMessage } from "./Message";
+import { assistantMessage, toolResultMessage } from "./Message";
 import type { RunCallbacks } from "./RunCallbacks";
 import { requestUrls } from "../orchestration/UrlIntent";
 import { researchContextMessage } from "./ResearchContext";
@@ -135,14 +136,7 @@ export class ResearchAgent {
                               "Research output blocked by validation.",
                       };
             }
-            messages.push({
-                role: "model",
-                parts:
-                    response.rawParts ??
-                    response.toolcalls.map((call) => ({
-                        functionCall: { name: call.name, args: call.params },
-                    })),
-            });
+            messages.push(assistantMessage(response));
             for (const call of response.toolcalls) {
                 signal?.throwIfAborted();
                 // Enforce the read-only allowlist at dispatch, not only in model declarations.
@@ -167,20 +161,9 @@ export class ResearchAgent {
                     }
                 }
                 const serialized = JSON.stringify(result) ?? "null";
-                messages.push({
-                    role: "tool",
-                    parts: [
-                        {
-                            functionResponse: {
-                                name: call.name,
-                                response: {
-                                    sourceData:
-                                        researchContextMessage(serialized),
-                                },
-                            },
-                        },
-                    ],
-                });
+                messages.push(toolResultMessage(call, {
+                    sourceData: researchContextMessage(serialized),
+                }));
             }
             callbacks?.onStatus?.("researching...");
         }

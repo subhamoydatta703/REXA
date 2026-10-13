@@ -13,6 +13,7 @@ import { ToolRegistry } from "../../src/tools/ToolRegistry";
 import { CheckpointStore } from "../../src/tools/CheckpointStore";
 import { Workspace } from "../../src/tools/Workspace";
 import type { Message } from "../../src/agent/Message";
+import { migrateLegacyMessages } from "../../src/providers/gemini/GeminiProtocol";
 
 let root: string, store: SessionStore;
 beforeEach(async () => {
@@ -58,7 +59,7 @@ test("known credentials are not persisted and provider signatures survive", asyn
     process.env.REXA_TEST_API_KEY = "fixture-credential-value";
     try {
         const session = await store.create();
-        session.messages = [
+        session.messages = migrateLegacyMessages([
             {
                 role: "model",
                 content: "fixture-credential-value",
@@ -72,7 +73,7 @@ test("known credentials are not persisted and provider signatures survive", asyn
                     },
                 ],
             },
-        ];
+        ]);
         await store.save(session);
         const bytes = await readFile(
             path.join(store.directory, session.id + ".jsonl"),
@@ -87,7 +88,7 @@ test("known credentials are not persisted and provider signatures survive", asyn
     }
 });
 test("recovery completes only missing tool results without executing anything", () => {
-    const messages: Message[] = [
+    const messages = migrateLegacyMessages([
         {
             role: "model",
             parts: [
@@ -106,7 +107,7 @@ test("recovery completes only missing tool results without executing anything", 
                 },
             ],
         },
-    ];
+    ]);
     const recovered = recoverInterruptedMessages(messages);
     expect(recovered).toHaveLength(3);
     expect(JSON.stringify(recovered[2])).toContain("outcome unknown");
@@ -123,25 +124,11 @@ test("compaction preserves original requirements and recent call/result structur
         messages.push(
             {
                 role: "model",
-                parts: [
-                    {
-                        functionCall: {
-                            name: "read_file",
-                            args: { path: "a.ts" },
-                        },
-                    },
-                ],
+                toolCalls: [{ id: `read-${i}`, name: "read_file", params: { path: "a.ts" } }],
             },
             {
                 role: "tool",
-                parts: [
-                    {
-                        functionResponse: {
-                            name: "read_file",
-                            response: { result: "fixture ".repeat(2000) },
-                        },
-                    },
-                ],
+                toolResults: [{ callId: `read-${i}`, name: "read_file", output: { result: "fixture ".repeat(2000) } }],
             },
         );
     const manager = new ContextManager(100_000, 2);

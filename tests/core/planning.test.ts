@@ -38,8 +38,8 @@ test("planning reads evidence, blocks invented mutation calls, and keeps context
                     role: "model",
                     text: "",
                     toolcalls: [
-                        { name: "read_file", params: {} },
-                        { name: "code_tool", params: {} },
+                        { id: "fixture-1557", name: "read_file", params: {} },
+                        { id: "fixture-1616", name: "code_tool", params: {} },
                     ],
                 };
             }

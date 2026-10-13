@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import { Agent } from "./agent/Agent";
 import { CLI } from "./cli/AgentCLI";
-import { GeminiProvider } from "./providers/GeminiProvider";
+import { GeminiProvider } from "./providers/gemini/GeminiProvider";
 import { codeTool, codingContextTool } from "./tools/CodingTools";
 import { defaultExecutionTools } from "./tools/executeTools";
 import { sandboxManager } from "./tools/ExecutionManager";
@@ -24,6 +24,10 @@ import { LocalCommands } from "./cli/LocalCommands";
 import { PermissionService, setPermissions } from "./tools/PermissionService";
 import { ConfigManager } from "./config/ConfigManager";
 import { runOptionalApiSetup } from "./cli/OptionalApiSetup";
+import { ProviderSetup } from "./cli/ProviderSetup";
+import { parseProviderId } from "./providers/ProviderSettings";
+import { DEFAULT_GEMINI_MODEL } from "./providers/gemini/GeminiProtocol";
+import { ModelCatalog } from "./providers/ModelCatalog";
 
 import { password } from "@inquirer/prompts";
 import chalk from "chalk";
@@ -55,6 +59,87 @@ async function main() {
     const configCmd = program
         .command("config")
         .description("Manage REXA CLI configuration");
+
+    configCmd
+        .command("set-provider-key <provider>")
+        .description(
+            "Save a Gemini, OpenAI, or Anthropic API key using masked input",
+        )
+        .action(async (providerName: string) => {
+            const provider = parseProviderId(providerName);
+            if (!process.stdin.isTTY || !process.stdout.isTTY) {
+                throw new Error(
+                    "Use an interactive terminal for masked key entry, or set the provider API key environment variable.",
+                );
+            }
+            let key: string;
+            try {
+                key = await password({
+                    message: `Enter your ${provider} API key:`,
+                    mask: "*",
+                });
+            } catch {
+                return;
+            }
+            if (key.trim()) {
+                await ConfigManager.setProviderApiKey(provider, key);
+            }
+        });
+
+    configCmd
+        .command("set-provider <provider>")
+        .description(
+            "Save provider/model/reasoning preferences (requires an available runtime adapter to run)",
+        )
+        .option("--model <id>", "Exact supported model ID")
+        .option("--reasoning <level>", "Supported effort level, or default")
+        .action(
+            async (
+                providerName: string,
+                options: { model?: string; reasoning?: string },
+            ) => {
+                const setup = new ProviderSetup({
+                    interactive: Boolean(
+                        process.stdin.isTTY && process.stdout.isTTY,
+                    ),
+                    getPreferences: () =>
+                        ConfigManager.getProviderPreferences(),
+                    getKey: (provider) =>
+                        ConfigManager.getProviderApiKey(provider),
+                    readKey: (provider) =>
+                        password({
+                            message: `Enter your ${provider} API key:`,
+                            mask: "*",
+                        }),
+                    saveKey: (provider, key) =>
+                        ConfigManager.setProviderApiKey(provider, key),
+                    saveSettings: (settings) =>
+                        ConfigManager.setProviderSettings(settings),
+                });
+                const result = await setup.configure(providerName, options);
+                if (result.status === "saved") {
+                    console.log(
+                        `Saved provider: ${result.settings.provider}; model: ${result.settings.model}; reasoning: ${result.settings.reasoning}.`,
+                    );
+                    if (
+                        result.settings.provider !== "gemini" ||
+                        result.settings.reasoning !== "default"
+                    ) {
+                        console.log(
+                            "These settings are saved, but this build does not yet have the required runtime adapter/settings support.",
+                        );
+                    }
+                }
+            },
+        );
+
+    configCmd
+        .command("show-provider")
+        .description("Show saved provider preferences without credentials")
+        .action(async () => {
+            const preferences = await ConfigManager.getProviderPreferences();
+            console.log(JSON.stringify(preferences, null, 2));
+        });
     configCmd
         .command("set-key [key]")
         .description("Set or update your Gemini API key securely")
@@ -181,9 +266,26 @@ async function main() {
             process.exit(0);
         }
 
+        const selection = (await ConfigManager.getProviderPreferences()).active;
+        if (selection) {
+            new ModelCatalog().validateSettings(selection);
+            if (selection.provider !== "gemini") {
+                throw new Error(
+                    `The ${selection.provider} runtime adapter is not available in this build. Your preferences are saved. Choose Gemini with rexa config set-provider gemini.`,
+                );
+            }
+            if (
+                selection.model !== DEFAULT_GEMINI_MODEL ||
+                selection.reasoning !== "default"
+            ) {
+                throw new Error(
+                    "This build cannot apply the saved Gemini model/reasoning override yet. Use rexa config set-provider gemini --reasoning default.",
+                );
+            }
+        }
         await ConfigManager.ensureCliAuth();
 
-        // Resolve Gemini API key dynamically across env vars, ~/.rexa/config.json, or prompt user
+        // Resolve the active Gemini credential; other runtime adapters are added later.
         const apiKey = await ConfigManager.ensureApiKey();
         process.env.GEMINI_API_KEY = apiKey;
         await runOptionalApiSetup();

@@ -183,7 +183,7 @@ describe("research evidence", () => {
         expect(JSON.stringify(observed[0])).toContain("Verified page content.");
         expect(
             observed[0]?.some((message) =>
-                message.parts?.some((part) => part.functionCall),
+                Boolean(message.toolCalls?.length),
             ),
         ).toBe(false);
         expect(observed[0]?.[1]?.role).toBe("user");
@@ -228,7 +228,7 @@ describe("research evidence", () => {
                     ? {
                           role: "model",
                           text: "",
-                          toolcalls: [{ name: "code_tool", params: {} }],
+                          toolcalls: [{ id: "fixture-9237", name: "code_tool", params: {} }],
                       }
                     : answer;
             },

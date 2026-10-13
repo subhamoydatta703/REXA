@@ -44,6 +44,7 @@
 - [Persistent cloud memory](#persistent-cloud-memory)
 - [Installation and setup](#installation-and-setup)
 - [Configuration and credentials](#configuration-and-credentials)
+  - [Provider configuration groundwork](#provider-configuration-groundwork)
 - [LLM provider integration](#llm-provider-integration)
 - [Current release and Cosmos roadmap](#current-release-and-cosmos-roadmap)
 - [Project structure](#project-structure)
@@ -599,6 +600,8 @@ Environment variables take precedence over credentials stored in the local vault
 | :--- | :--- |
 | `GEMINI_API_KEY` | Primary API key for the Gemini LLM model. |
 | `GOOGLE_GEMINI_API_KEY` | Alternate Gemini key variable; `GEMINI_API_KEY` takes precedence. |
+| `OPENAI_API_KEY` | OpenAI credential for provider configuration. Runtime adapter support is still pending. |
+| `ANTHROPIC_API_KEY` | Anthropic/Claude credential for provider configuration. Runtime adapter support is still pending. |
 | `GEMINI_GUARD_API_KEY` | Guardrail fallback when no explicit constructor key is supplied. Normal CLI startup passes the main Gemini key explicitly, which takes precedence. |
 | `GEMINI_STREAMING_API_KEY` | Key for the separate `GeminiStreaming.ts` helper, falling back to `GEMINI_API_KEY`; it does not select the active coding provider's key. |
 | `TVLY_API_KEY` | Optional Tavily search key for enhanced research queries. |
@@ -614,11 +617,50 @@ Environment variables take precedence over credentials stored in the local vault
 
 ---
 
+### Provider configuration groundwork
+
+Cosmos Phase 2 adds secure credentials and saved defaults for Gemini, OpenAI, and Anthropic. Provider keys use the OS vault or encrypted-file storage; ordinary model/reasoning preferences are stored separately as fields in `~/.rexa/config.json`. Existing credentials and optional API setup choices are preserved.
+
+```bash
+# Masked credential entry; claude is also accepted for anthropic
+rexa config set-provider-key openai
+rexa config set-provider-key anthropic
+
+# Save a validated selection, prompting only for that provider's missing key
+rexa config set-provider openai --model gpt-5 --reasoning high
+rexa config set-provider claude
+
+# Show preferences without credentials
+rexa config show-provider
+
+# Return to the currently supported runtime configuration
+rexa config set-provider gemini --reasoning default
+```
+
+These commands configure future runtime support; they do not add working OpenAI or Claude adapters. Startup rejects an unavailable saved provider or unsupported Gemini override before login/key prompts, instead of silently using different settings. Existing `rexa config set-key` remains the Gemini credential command. Noninteractive configuration uses environment keys and fails with instructions if one is missing; masked input requires an interactive terminal.
+
+Each provider remembers its last model/effort. Invalid settings are rejected before credential changes, cancelled/empty prompts do not change preferences, and failed saves retain the previous selection. Credentials are stored independently: if a new key saves successfully but the subsequent preference save fails, the key remains stored while the previous selection stays active. Setup validates storage and supported settings, not live API authentication.
+
+| Configuration command | Current behavior |
+| --- | --- |
+| `rexa config set-provider-key <provider>` | Ask for a masked key and store it. Accepts `gemini`, `openai`, `anthropic`, or the `claude` alias; requires interactive input/output. |
+| `rexa config set-provider <provider> [--model <id>] [--reasoning <level>]` | Validate and save global defaults, using that provider's remembered settings or its first catalog entry. Request only its missing key when interactive. |
+| `rexa config show-provider` | Print saved active/remembered preferences without credentials. It does not query an API or confirm access. |
+| `rexa config set-key [key]` | Existing Gemini key command; changing the key does not change the selected provider. |
+
+These are shell commands, entered outside the chat. `/provider`, `/model`, and `/reasoning` are still planned chat commands. If `show-provider` has no `active` entry, normal startup uses the existing Gemini path. When changing models, an unsupported remembered effort resets to `default`; an explicitly unsupported `--reasoning` value is rejected.
+
+Provider keys are resolved from environment variables first, then the OS vault, then the encrypted file. Gemini accepts `GEMINI_API_KEY` before `GOOGLE_GEMINI_API_KEY`; the other providers use `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. Successfully loaded or entered LLM keys are registered for exact redaction in the running process, including keys loaded from storage without environment export. This extends existing pattern-based redaction; it does not claim detection of every unknown secret.
+
 ## LLM provider integration
 
 REXA integrates with the Gemini LLM model through `GeminiProvider.ts`.
 
-The active adapter currently hardcodes `gemini-3.8-flash`. This is the identifier in source, not a guarantee that a user's API account can access it. Thinking configuration types and a separate streaming helper exist, but the active CLI has no model or reasoning selection menu. Shared messages still use Google's `Part` type, and supervision and guardrails create Google clients directly.
+The active adapter in `src/providers/gemini/` currently uses `gemini-3.8-flash`. This is not a guarantee that a user's API account can access it. Thinking configuration types and a separate streaming helper exist, but the active CLI has no model or reasoning selection menu. Supervision and guardrails still create Google clients directly.
+
+Cosmos Phase 1 introduces provider-independent messages: tool calls have unique IDs and results refer to those IDs. The main, research, and debugging agents use that shared format. Gemini-specific conversion and signed continuation parts stay in `gemini/GeminiProtocol.ts`. Old saved Gemini conversations are converted in memory on load; original transcript records remain intact.
+
+`ProviderSettings.ts` and `ModelCatalog.ts` validate provider/model/reasoning combinations. The initial verified catalog contains Gemini 3.8 Flash, GPT-5, and Claude Sonnet 4.6, with official sources and review dates. OpenAI and Claude entries are capability definitions, not working adapters or a recommendation of the newest model. Discovery uses an injected function, a bounded in-memory cache, cancellation, and catalog fallback; actual provider model-list calls and menus are future work.
 
 - **Structured function calling**: Automatically converts Zod schema definitions into JSON schema declarations.
 - **Token streaming support**: The provider supports token callbacks. The coding agent buffers response text until output validation before rendering it.
@@ -637,11 +679,13 @@ The current package is `rexa-agent` version `2.1.0`. The CLI's `--version` and t
 | Debugging agent and three-file verification workflow | Implemented, including test preparation, bounded repair, retesting, and recorded reports. |
 | Optional Tavily and Bright Data setup | Implemented with explicit uppercase Y/N decisions. |
 | Gemini coding provider | Implemented with a hardcoded model. |
+| Shared messages, tool-call IDs, legacy transcript conversion, and model-capability validation | Implemented in Cosmos Phase 1. |
+| Secure OpenAI/Anthropic credentials and saved defaults | Implemented in Cosmos Phase 2, including provider-aware config commands and exact-value credential redaction. |
 | OpenAI and Anthropic/Claude providers | Planned; adapters and dependencies are not present. |
 | `/provider`, `/model`, and `/reasoning` | Planned; not current commands. `/model` is intended to offer a reasoning submenu. |
-| Saved provider/model/effort and safe cross-provider session switching | Planned; current session records do not contain that selection. |
+| Per-session provider/model/effort and safe cross-provider session switching | Planned; current session records do not contain that selection. Global/per-provider preferences are already stored. |
 
-The next provider work must cover the whole task pipeline, model-specific capabilities, credentials, tool protocols, cancellation, and session compatibility. Adding a menu alone will not remove the current Gemini dependencies. See [Developing Rexa](./DEVELOPMENT.md#current-provider-boundary-and-planned-cosmos-work).
+Next is Phase 3: implement OpenAI and Anthropic adapters and map validated model/reasoning settings into Gemini requests. Later phases connect the full task pipeline, add chat controls, and persist selections in sessions. Credential storage and global preference configuration are already available. See [Developing Rexa](./DEVELOPMENT.md#current-provider-boundary-and-planned-cosmos-work).
 
 ---
 
@@ -703,13 +747,16 @@ The next provider work must cover the whole task pipeline, model-specific capabi
 │   ├── providers/
 │   │   ├── LLMProvider.ts           # Provider abstraction contract
 │   │   ├── LLMResponse.ts           # Response interfaces and token callback types
-│   │   ├── GeminiProvider.ts        # Gemini LLM model implementation
-│   │   ├── GeminiConfig.ts          # Gemini thinking/output configuration type
-│   │   └── GeminiStreaming.ts       # Streaming helper utilities
+│   │   ├── ProviderSettings.ts      # Provider IDs, settings, and capability schemas
+│   │   ├── ModelCatalog.ts          # Verified capabilities, validation, discovery cache
+│   │   ├── gemini/                  # GeminiProvider, GeminiProtocol, config, streaming, models
+│   │   ├── openai/models.ts         # Verified OpenAI model definitions; adapter pending
+│   │   └── claude/models.ts         # Verified Claude model definitions; adapter pending
 │   ├── cli/
 │   │   ├── AgentCLI.ts              # Interactive REPL session controller
 │   │   ├── LocalCommands.ts         # Resume, undo, permissions, and process commands
 │   │   ├── OptionalApiSetup.ts      # Optional Tavily/Bright Data onboarding
+│   │   ├── ProviderSetup.ts         # Validated provider setup and masked-key coordination
 │   │   ├── AgentUI.ts               # Terminal UI rendering, composer, and formatting
 │   │   └── TerminalState.ts         # Spinner coordination during interactive prompts
 │   ├── config/
@@ -758,6 +805,16 @@ When reporting a failure, share the redacted provider message and the failed sta
 ### Verification reports unavailable
 
 Read the check's recorded detail before treating it as a code failure. Workspace snapshots require host `rg`; Docker, permissions, the selected executable, and project dependencies must also be available. The Docker CI job installs host ripgrep explicitly. Installing ripgrep only inside the container does not satisfy host snapshot discovery.
+
+### Saved provider cannot run
+
+Phase 2 can store OpenAI/Anthropic preferences, but their runtime adapters are pending. Startup reports that limitation before requesting Gemini or REXA login credentials. To return to the supported Gemini configuration, run:
+
+```bash
+rexa config set-provider gemini --model gemini-3.8-flash --reasoning default
+```
+
+This may ask for the Gemini key if it is missing. `set-provider-key` alone does not select a provider. Noninteractive missing-key errors require the corresponding environment variable or masked setup in an interactive terminal. If preferences cannot be saved, the previous selection remains active; an independently saved key may still be available.
 
 ### Guardrail rejection errors
 - If input is blocked with `Potential secret detected`, ensure API keys or passwords are not pasted into the interactive chat. Use `rexa config set-key` or environment variables instead.

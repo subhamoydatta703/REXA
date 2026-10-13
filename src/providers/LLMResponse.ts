@@ -1,22 +1,14 @@
-import type { Part } from "@google/genai";
+import type { NativeContinuation } from "../agent/Message";
 import { type ToolCall } from "../tools/ToolRegistry";
 
 export interface LLMResponse {
     role: string;
     text: string;
-    rawParts?: Part[];
+    native?: NativeContinuation;
     toolcalls?: ToolCall[];
     error?: {
         type: string;
         message: string;
-    };
-}
-
-export interface GeminiRawJsonError {
-    error: {
-        code: number;
-        message: string;
-        status: string;
     };
 }
 

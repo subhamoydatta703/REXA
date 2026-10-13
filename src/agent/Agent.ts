@@ -1,4 +1,4 @@
-import { type Message } from "./Message";
+import { assistantMessage, toolResultMessage, type Message } from "./Message";
 import { type LLMProvider } from "../providers/LLMProvider";
 import type { ToolCall, ToolRegistry } from "../tools/ToolRegistry";
 import { type ExecutionManager } from "../tools/ExecutionManager";
@@ -27,13 +27,6 @@ import {
 import { DebuggingAgent } from "./DebuggingAgent";
 
 const MAX_TOOL_RESULT_CHARACTERS = 24_000;
-
-function toolResultMessage(name: string, result: unknown): Message {
-    return {
-        role: "tool",
-        parts: [{ functionResponse: { name, response: { result } } }],
-    };
-}
 
 function prepareToolResult(result: unknown): unknown {
     const sanitized = sanitizeStored(result);
@@ -341,8 +334,8 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
         if (!this.registry.getTool(toolCall.name)) {
             this.messages.push(
                 toolResultMessage(
-                    toolCall.name,
-                    `Tool ${toolCall.name} not found`,
+                    toolCall,
+                    { result: `Tool ${toolCall.name} not found` },
                 ),
             );
             return;
@@ -379,7 +372,7 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
         logger.debug(`Tool completed: ${toolCall.name}`, { duration });
         callbacks?.onStatus?.(agentStatus);
         this.messages.push(
-            toolResultMessage(toolCall.name, prepareToolResult(result)),
+            toolResultMessage(toolCall, { result: prepareToolResult(result) }),
         );
         await this.persist("running", mode);
     }
@@ -605,21 +598,11 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                     await this.verification.beforeMutation();
                     await this.persistVerification(mode);
                 }
-                // 1. Push model turn with exact returned parts (preserves functionCall & thought_signature)
-                this.messages.push({
-                    role: "model",
-                    parts:
-                        response.rawParts ??
-                        response.toolcalls.map((call) => ({
-                            functionCall: {
-                                name: call.name,
-                                args: call.params,
-                            },
-                        })),
-                });
+                // Store shared calls and opaque continuation data before executing.
+                this.messages.push(assistantMessage(response));
                 await this.persist("running", mode);
 
-                // 2. Execute tools & push tool turn with functionResponse
+                // Match every result to its call ID, even for repeated tool names.
                 for (const toolCall of response.toolcalls) {
                     await this.executeToolCall(
                         toolCall,

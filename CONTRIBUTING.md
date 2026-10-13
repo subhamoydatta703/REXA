@@ -84,7 +84,13 @@ Before submitting pull requests, familiarize yourself with REXA's core subsystem
   - `LocalCommands.ts`: Handles sessions, compaction, diffs, undo, permission display, and owned processes. Provider/model/reasoning commands are planned, not present.
   - `OptionalApiSetup.ts`: Explains optional Tavily/Bright Data setup, accepts only uppercase Y/N, and opens masked key input after Y.
 
-See [DEVELOPMENT.md](./DEVELOPMENT.md) for lifecycle rules, readability conventions, and the [current provider boundary](./DEVELOPMENT.md#current-provider-boundary-and-planned-cosmos-work). Current runtime provider support is Gemini; OpenAI/Anthropic support and Cosmos selection controls remain future implementation work.
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for lifecycle rules, readability conventions, and the [current provider boundary](./DEVELOPMENT.md#current-provider-boundary-and-planned-cosmos-work). Current runtime provider support is Gemini. Phase 1 adds shared messages/tool-call IDs and a capability catalog; OpenAI/Anthropic adapters and Cosmos selection controls remain future implementation work.
+
+Put provider-specific code under `src/providers/gemini/`, `openai/`, or `claude/`; keep shared settings and catalog code in `src/providers/`. Shared agent and session messages must not import an SDK's message types. Preserve call IDs and provider-native signatures, and cover repeated tool names and older transcripts when changing the protocol. Catalog entries need official capability sources and review dates; do not infer effort support or account access from a model name alone.
+
+Phase 2 provides provider-aware key storage and `rexa config set-provider-key`, `set-provider`, and `show-provider`. Test setup with isolated homes and mocked vaults so tests cannot alter developer credentials. Cover environment precedence, old config migration, independent vault failures, cancelled prompts, rejected saves, and exact-value redaction in logs/transcripts/reports. Runtime adapters and slash-command selection still belong to later phases.
+
+When reviewing configuration changes, distinguish a successful credential save from a successful preference save and from a successful API request. They are separate outcomes. Keep command help and the README explicit about runtime support. A configuration-only OpenAI/Claude selection must not accidentally start Gemini or prompt for its key. See [provider storage and setup sequence](./DEVELOPMENT.md#provider-preference-storage-and-setup-sequence) for the persisted shape and ordering requirements.
 
 ---
 

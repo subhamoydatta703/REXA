@@ -18,7 +18,7 @@ function compactionBoundary(messages: Message[], recentTurns: number): number {
         if (isUserRequest(message)) {
             userTurns.push(index);
         }
-        if (message.role === "model") {
+        if (message.role === "model" || message.role === "assistant") {
             modelTurns.push(index);
         }
     }
