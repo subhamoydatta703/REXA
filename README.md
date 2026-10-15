@@ -37,6 +37,7 @@
 - [Sessions and local commands](#sessions-and-local-commands)
 - [Editing and conflict recovery](#editing-and-conflict-recovery)
 - [Automatic verification and repair](#automatic-verification-and-repair)
+- [Local evaluation history](#local-evaluation-history)
 - [Interactive terminal experience](#interactive-terminal-experience)
 - [Available tools](#available-tools)
 - [Docker sandbox environment](#docker-sandbox-environment)
@@ -68,6 +69,7 @@ Modern software development requires balancing autonomous execution with safety 
 6. **Explicit persistent memory**: Cross-session user preferences and development rules are stored securely through authenticated endpoints.
 7. **Test, repair, and retest**: Coding completions can trigger a separate debugging agent that creates or reuses relevant tests. The application executes them, requests bounded repairs, reruns checks, and reports recorded results.
 8. **Conversation continuity**: Workspace-scoped local sessions support resume, interruption recovery, and context compaction independently of cloud preference memory.
+9. **Local evaluation history**: Normal CLI tasks produce compact records of available outcomes, verification results, repairs, and activity. Compatible runs can be compared across revisions without introducing another testing or debugging pipeline.
 
 ---
 
@@ -112,6 +114,8 @@ User Input
 Final workspace-stability check → recorded verification report → terminal output
 ```
 
+The CLI's evaluation tracker observes these workflows and saves a compact record after the task returns or throws. It also captures available direct/research-only outcomes. Recording does not generate tests, approve tools, or trigger repairs; storage failure warns without changing the task result.
+
 ---
 
 ## System architecture
@@ -120,6 +124,10 @@ The project is structured around modular subsystems separating CLI presentation,
 
 ```text
 Terminal Interface (AgentCLI & AgentUI)
+  │
+  ├── EvaluationTracker (observes calls to the orchestrator)
+  │     ├── EvaluationRecord (summaries and compatible-run comparisons)
+  │     └── EvaluationStore (.rexa/past-evaluations/ and retention)
   │
   └── Orchestrator (src/orchestration/Orchestrator.ts)
         │
@@ -242,11 +250,17 @@ Inside the terminal, local commands are handled without sending the command itse
 | `/permissions` | Display defaults, configured rules, and the session grant count. |
 | `/ps` | List processes tracked by the sandbox process manager. |
 | `/stop [process-id]` | Stop one tracked process, or all owned sandbox processes when no ID is supplied. |
+| `/evaluation-task [name\|auto]` | Name subsequent tasks for local history, or restore exact-prompt grouping. |
+| `/evaluations [task-id]` | Show saved task summaries and compatible-run comparisons. |
+| `/evaluation-baseline <run-id\|clear>` | Protect one existing run for the current task, or clear its protection. |
+| `/evaluation-retention [5-10:MiB]` | Show limits or set recent runs and the global record budget, for example `10:20`. |
 | `/help` | Show available local commands. |
 
 An interrupted tool call with no recorded result has an unknown outcome. Resume records that uncertainty instead of replaying the call. Check the workspace before continuing. Process handles do not survive a Rexa restart.
 
 Automatic compaction uses a character budget, not an exact model token count. Summaries can omit details. If compaction fails or cannot reduce the context enough, Rexa retains the original history and reports the failure.
+
+See [local evaluation history](#local-evaluation-history) for saved task evidence, comparisons, and retention controls.
 
 ## Editing and conflict recovery
 
@@ -328,6 +342,85 @@ Source snapshots compare discovered, nonprotected, nonignored text files before 
 Passing checks establish only what the selected commands test. A check failing both before and after changes does not prove that Rexa introduced no additional errors. Repair reasoning, test adequacy, and preservation of intent still require review; instructions against weakening checks are not a semantic guarantee.
 
 Snapshots require **ripgrep on the host PATH**, even when checks run inside Docker. If the initial snapshot cannot be established, checks can return `unavailable` before a command is dispatched. Read the recorded detail for the underlying failure; `unavailable` is not a failed assertion. Snapshot errors retain bounded, sanitized diagnostics.
+
+---
+
+## Local evaluation history
+
+Evaluation helps developers inspect how REXA performed on normal tasks and compare recorded work across versions. The existing debugging agent and verification workflow still create tests, execute checks, investigate failures, repair code, and retest. Evaluation summarizes their evidence; it does not run a second checking pipeline.
+
+```text
+Normal user task
+    → existing orchestration, agents, and tools
+    → existing verification/debugging/retest when applicable
+    → compact local evaluation record
+    → comparison with a selected baseline or latest run
+    → retention cleanup
+```
+
+### Use it during normal work
+
+Enter these commands inside REXA's chat:
+
+```text
+/evaluation-task authentication
+```
+
+Then submit your normal request, for example: “Fix authentication: valid sessions return 200; missing or invalid sessions return 401.” After it finishes, inspect the recorded outcome:
+
+```text
+/evaluations
+```
+
+The history lists saved run IDs, outcomes, verification summaries, observed activity, version information, and comparison results. To protect one existing run as the reference for this task, use its actual ID:
+
+```text
+/evaluation-baseline <run-id>
+```
+
+`/evaluation-baseline clear` removes that protection. `/evaluation-task auto` returns to grouping by the exact prompt. A named task remains selected for the current CLI instance until changed; records and baseline selections survive restart. Without an explicit name, exact prompts receive automatically generated task IDs. `/evaluations <task-id>` reads a specific task's history.
+
+### What gets recorded and compared
+
+| Evidence | Current behavior |
+| --- | --- |
+| Task and configuration | Redacted prompt preview, requirement fingerprint, available starting-project fingerprint, REXA version/revision/source fingerprint, model settings, mode, runtime/platform, and known permission policy. |
+| Task outcome | Returned response completion, verification blocker, observed guardrail blocker, error, or cancellation. Completion alone is not proof of correctness. |
+| Verification | Baseline/first/latest command-check counts, repair rounds, referenced test files, declared behavior coverage, bounded failures/locations, test-change reasons, and labelled debugger-reported findings. |
+| Activity | Duration, shared-provider requests/errors, observed tool failures/denials, guardrail blocks, and URL retrieval outcomes. |
+| Source reference | Coding-session ID when emitted. Full transcripts remain in existing session storage; some routes have no session reference. |
+
+An automatic comparison requires matching recorded requirements, starting project state, model/reasoning, mode, environment, known permission policy, route, and verification command plan. Different REXA revisions can be compared when those conditions match. Unknown or different context produces an explanation instead of automatic deltas. You must restore comparable starting conditions yourself; evaluation does not restore projects or repeat tasks.
+
+Compatible records show changes in duration and shared-provider request counts, plus repair rounds and failed command checks when verification evidence exists. A negative time delta means less recorded time, not automatically better work. Repeat comparable tasks and review outcomes before attributing an improvement to an implementation change.
+
+### Storage and retention
+
+Records stay in the active project:
+
+```text
+.rexa/past-evaluations/
+├── .gitignore
+├── settings.json                 # Written when settings are configured
+└── authentication/
+    ├── baseline.json             # Written when an existing run is selected
+    └── <run-id>/
+        └── record.json
+```
+
+The default is **five recent unprotected runs per task**, configurable from five through ten, plus **one explicitly selected baseline**. The default global budget is **20 MiB of managed record JSON**, with a **64,000-byte per-record cap**. Small metadata and temporary-write overhead are additional. For ten recent runs with the same budget:
+
+```text
+/evaluation-retention 10:20
+```
+
+`/evaluation-retention` shows current settings. Older unprotected records are pruned after a successful save; the global budget can remove older unprotected records across tasks. Protected baselines are never silently deleted. If a record cannot fit alongside them, recording warns and leaves existing history intact. A nested ignore rule protects records in other Git repositories without rewriting their top-level `.gitignore`.
+
+No complete project or full transcript is copied. Recording failure leaves the original task result unchanged. Corrupt files, unexpected contents, or symlinks may require manual inspection rather than automatic deletion.
+
+These summaries are not independent proof of quality. Test-file counts are not scores, command-check counts are not individual assertion totals, and declared coverage/findings come from the debugger. Research factual accuracy and plan usefulness require review. Shared-provider counts exclude direct supervisor/guardrail calls; retries, token usage, and exact costs remain unknown. Matching metadata does not control every environmental influence or changing web content. No live performance gain or overall quality score is claimed.
+
+See [developer evaluation details](DEVELOPMENT.md#local-evaluation-history) for implementation responsibilities. The earlier scripted `evaluations/` harness and `eval:fixture` command have been removed.
 
 ---
 
@@ -681,11 +774,16 @@ The current package is `rexa-agent` version `2.1.0`. The CLI's `--version` and t
 | Gemini coding provider | Implemented with a hardcoded model. |
 | Shared messages, tool-call IDs, legacy transcript conversion, and model-capability validation | Implemented in Cosmos Phase 1. |
 | Secure OpenAI/Anthropic credentials and saved defaults | Implemented in Cosmos Phase 2, including provider-aware config commands and exact-value credential redaction. |
+| Local evaluation records, retention, baselines, and compatible-run comparisons | Implemented under `src/evaluation/`; observes normal CLI tasks and existing verification evidence. |
+| Basic evaluation measurements | Duration and observed activity/deltas exist; complete usage accounting, reviewed quality measures, and repeated live performance studies remain pending. |
+| Chronological evidence export and general noninteractive task execution | Planned; compact evaluation history does not provide either capability. |
 | OpenAI and Anthropic/Claude providers | Planned; adapters and dependencies are not present. |
 | `/provider`, `/model`, and `/reasoning` | Planned; not current commands. `/model` is intended to offer a reasoning submenu. |
 | Per-session provider/model/effort and safe cross-provider session switching | Planned; current session records do not contain that selection. Global/per-provider preferences are already stored. |
 
-Next is Phase 3: implement OpenAI and Anthropic adapters and map validated model/reasoning settings into Gemini requests. Later phases connect the full task pipeline, add chat controls, and persist selections in sessions. Credential storage and global preference configuration are already available. See [Developing Rexa](./DEVELOPMENT.md#current-provider-boundary-and-planned-cosmos-work).
+Next in the original provider roadmap is Phase 3: implement OpenAI and Anthropic adapters and map validated model/reasoning settings into Gemini requests. Later phases connect the full task pipeline, add chat controls, and persist selections in sessions. In the evaluation/preparation work, compact history/comparison is implemented and chronological evidence export is next. Credential storage and global preference configuration are already available. See [Developing Rexa](./DEVELOPMENT.md#current-provider-boundary-and-planned-cosmos-work).
+
+This README describes the inspected source, including current uncommitted evaluation-history changes. It does not establish that those changes are merged into `main` or published on npm. The existing package/version displays and missing runtime adapters remain as described above.
 
 ---
 
@@ -706,7 +804,7 @@ Next is Phase 3: implement OpenAI and Anthropic adapters and map validated model
 │   │   ├── ReseatchAgentSystemPrompt.ts # Research persona and report specifications
 │   │   ├── AgentMode.ts             # Plan and Act mode definitions
 │   │   ├── Message.ts               # Conversation turn data contracts
-│   │   └── RunCallbacks.ts          # Streaming and status update callback interfaces
+│   │   └── RunCallbacks.ts          # Streaming, status, and optional recorded-evidence callbacks
 │   ├── tools/
 │   │   ├── ToolRegistry.ts          # Tool contracts and registration
 │   │   ├── ToolDispatcher.ts        # Mode, schema, and permission checks
@@ -736,6 +834,11 @@ Next is Phase 3: implement OpenAI and Anthropic adapters and map validated model
 │   │   ├── VerificationWorkflow.ts  # Stages, repair decisions, and completion checks
 │   │   ├── VerificationRunner.ts    # Baseline discovery, command execution, and stability
 │   │   └── VerificationResults.ts   # Schemas, recorded evidence, and final report
+│   ├── evaluation/
+│   │   ├── EvaluationRecord.ts      # Compact evidence schemas, summaries, and comparisons
+│   │   ├── EvaluationStore.ts       # Local history, protected baselines, and retention
+│   │   ├── EvaluationTracker.ts     # Observes normal tasks and shared-provider requests
+│   │   └── EvaluationCommands.ts    # Task naming, history, baseline, and storage controls
 │   ├── guardrails/
 │   │   ├── input/
 │   │   │   ├── InputGuardrails.ts   # Prompt injection and malicious content detection
@@ -754,7 +857,7 @@ Next is Phase 3: implement OpenAI and Anthropic adapters and map validated model
 │   │   └── claude/models.ts         # Verified Claude model definitions; adapter pending
 │   ├── cli/
 │   │   ├── AgentCLI.ts              # Interactive REPL session controller
-│   │   ├── LocalCommands.ts         # Resume, undo, permissions, and process commands
+│   │   ├── LocalCommands.ts         # Sessions, undo, permissions, processes, and evaluation controls
 │   │   ├── OptionalApiSetup.ts      # Optional Tavily/Bright Data onboarding
 │   │   ├── ProviderSetup.ts         # Validated provider setup and masked-key coordination
 │   │   ├── AgentUI.ts               # Terminal UI rendering, composer, and formatting
@@ -837,7 +940,7 @@ To contribute or test modifications locally:
 # Run strict TypeScript compilation checks
 bun run typecheck
 
-# Run repository, planning, permissions, editing, sessions, and debugging/verification fixtures
+# Run repository, planning, permissions, editing, sessions, verification, and evaluation-history fixtures
 bun run test:core
 
 # Run web retrieval and mocked LinkedIn extraction tests (no live API calls)
@@ -862,6 +965,8 @@ bun run docker:build
 The stale-edit tests use temporary workspaces and mocked model responses, including an agent recovery flow that runs a real fixture test command. They do not evaluate a live model's reasoning. Passing fixtures cover their asserted scenarios, not every possible filesystem race or generated-code error. See [Developing Rexa](./DEVELOPMENT.md) for architecture, lifecycle rules, and readability conventions.
 
 Verification fixtures also use controlled model responses with real edits and Bun test execution; the Docker suite checks actual passing and failing command exit codes through the runner. These are different from a live-model evaluation. CI defines Linux/Windows type, core, web, and browser checks plus a Linux Docker job; the workflow definition alone does not establish its latest run passed.
+
+Evaluation-history tests cover persistence, five/ten-run retention, global budgets, protected baselines, secret redaction, comparison eligibility, path/symlink boundaries, actual agent/orchestrator/research observation, local controls, cancellation, and recording failures. During the replacement implementation on 2026-10-15, local Windows/Bun 1.3.14 checks passed: 119 core, 147 web, 9 Docker, and 3 browser tests (**278 total**), plus type checking. These are dated regression results, not newly run checks for this README edit, live-model performance evidence, or current GitHub CI results.
 
 ---
 

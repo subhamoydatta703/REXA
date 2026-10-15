@@ -37,6 +37,9 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # local planning / scratch docs
 docs/
 
+# Local task evidence and historical comparisons
+.rexa/past-evaluations/
+
 # IntelliJ based IDEs
 .idea/
 

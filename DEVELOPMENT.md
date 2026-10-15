@@ -178,6 +178,27 @@ When wiring configuration, preserve actual precedence: guardrail constructors pr
 
 ## Local state and remote memory
 
+### Local evaluation history
+
+`src/index.ts` wraps the normal orchestrator with `EvaluationTracker` and wraps the shared provider to count observed requests/errors. Optional `RunCallbacks.onEvidence` events report existing route, tool, guardrail, verification, and available coding-session outcomes. Observers do not authorize actions, alter verification decisions, or request repairs. Evaluation/storage errors leave the original task result intact.
+
+| File | Responsibility |
+| --- | --- |
+| `src/evaluation/EvaluationRecord.ts` | Schemas, bounded summaries of existing evidence, and compatible-context comparison. |
+| `src/evaluation/EvaluationStore.ts` | Atomic local writes, baseline selection, retention, locks, and guarded storage paths. |
+| `src/evaluation/EvaluationTracker.ts` | Observe normal tasks/provider calls, record known context, and save summaries. |
+| `src/evaluation/EvaluationCommands.ts` | Local task naming, history, baseline, and retention commands. |
+
+Records live under `<project>/.rexa/past-evaluations/<task-id>/<run-id>/record.json`. A selected baseline is an ID reference in the task's `baseline.json`, not a second copy. Defaults are five recent unprotected runs plus one baseline per task, a 20 MiB global managed-record JSON budget, and a 64 KB record cap. Settings allow five through ten recent runs. Count-based pruning runs after a successful record commit, then the global limit removes oldest unprotected records across tasks. A baseline that prevents a new save is retained and produces a warning. Small settings/lock/ignore files and temporary staging overhead are outside the record-byte budget. A nested `.gitignore` protects data in other repositories without modifying their top-level ignore rules. Unexpected files and symlinks are not silently deleted; recording may require manual inspection after corruption or incomplete interrupted writes.
+
+Use `/evaluation-task authentication`, perform the normal task, then `/evaluations`. Select `/evaluation-baseline <run-id>` to protect a reference; `clear` unpins it. `/evaluation-retention 10:20` keeps ten recent records with a 20 MiB budget. A selected name lasts for this CLI instance until changed; `/evaluation-task auto` returns to exact-prompt grouping. Records survive restart; task selection itself is not persisted.
+
+Comparisons require known matching starting snapshots and permission policy, exact prompt fingerprint, mode/model/settings, platform/runtime, route, and verification command plan. Session permission grants make policy matching unknown. Different REXA revisions/source fingerprints are allowed so before/after observations can be studied. Users must restore comparable initial state themselves; evaluation does not restore files or repeat tasks. Snapshots follow the existing bounded workspace observation and exclusions, not every possible environment influence. Matching metadata is not causal proof, and external research content may change.
+
+Command checks are counted, not free-form assertion totals. Coverage and findings are labelled debugger reports; first/latest failures and test-change explanations are bounded. Session IDs reference existing home-directory session storage; direct/research-only exchanges currently have no session ID event. Source references may become unavailable. Research accuracy and plan usefulness need review. Shared-provider counts cover main/research/debugging/reflection/compaction calls that use that provider, excluding direct supervisor/guardrail calls; retries and tokens remain unknown. No overall quality score or live performance gain is claimed.
+
+`tests/core/evaluation.test.ts` covers retention/restart/budgets/baselines, redaction, safe cleanup, mismatched comparisons, actual agent/orchestrator/research integration, cancellation, local controls, and recording failure. No live API key is required. The old top-level scripted `evaluations/` harness and `eval:fixture` command have been removed.
+
 `SessionStore`, checkpoints, and permission rules use private workspace-scoped files under `~/.rexa/workspaces/<workspace-id>`. `MemoryTools.ts` separately sends authenticated HTTP requests to REXA's save/search endpoints. The CLI source does not establish whether the remote server uses vector search, graph storage, PostgreSQL, or another backend.
 
 Memory descriptions instruct the model to save only explicitly requested preferences. The client enforces authentication, permissions, nonempty text, and an 8,192-character limit; that is not a semantic validator against every secret or conversation dump. Avoid documenting model instructions as unconditional runtime enforcement.

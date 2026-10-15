@@ -4,6 +4,7 @@ import type { AgentMode } from "../agent/AgentMode";
 import type { CheckpointStore } from "../tools/CheckpointStore";
 import { permissions } from "../tools/PermissionService";
 import { sandboxManager } from "../tools/ExecutionManager";
+import type { EvaluationCommands } from "../evaluation/EvaluationCommands";
 
 export interface LocalCommandResult {
     text: string;
@@ -27,6 +28,7 @@ export class LocalCommands {
                     "Restore the latest checkpoint? Conflicting user edits will be preserved.",
                 default: false,
             }),
+        private evaluations?: EvaluationCommands,
     ) {}
 
     async handle(input: string): Promise<LocalCommandResult | null> {
@@ -36,6 +38,13 @@ export class LocalCommands {
         const [command, arg, ...extra] = input.trim().split(/\s+/);
         if (extra.length) {
             throw new Error("Too many command arguments.");
+        }
+        const evaluationResult = await this.evaluations?.handle(
+            command?.toLowerCase() ?? "",
+            arg,
+        );
+        if (evaluationResult !== undefined && evaluationResult !== null) {
+            return { text: evaluationResult };
         }
         switch (command?.toLowerCase()) {
             case "/continue": {
@@ -99,7 +108,7 @@ export class LocalCommands {
             }
             case "/help":
                 return {
-                    text: "/continue · /resume-chat [id] · /new · /compact · /diff · /undo [checkpoint-id] · /permissions · /ps · /stop [process-id] · /help",
+                    text: "/continue · /resume-chat [id] · /new · /compact · /diff · /undo [checkpoint-id] · /permissions · /ps · /stop [process-id] · /evaluations [task-id] · /evaluation-task [name|auto] · /evaluation-baseline <run-id|clear> · /evaluation-retention [5-10:MiB] · /help",
                 };
             default:
                 return {
