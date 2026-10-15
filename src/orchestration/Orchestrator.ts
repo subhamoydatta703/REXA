@@ -6,6 +6,7 @@ import { isUrlInspectionRequest } from "./UrlIntent";
 import type { AgentMode } from "../agent/AgentMode";
 import type { RunCallbacks } from "../agent/RunCallbacks";
 import type { LLMResponse } from "../providers/LLMResponse";
+import { emitEvidence } from "../agent/RunCallbacks";
 
 export class Orchestrator {
     constructor(
@@ -26,6 +27,11 @@ export class Orchestrator {
             input: content,
             timestamp: new Date(),
         });
+        emitEvidence(callbacks, {
+            kind: "guardrail",
+            component: "orchestrator input",
+            isSafe: inputValidation.isSafe,
+        });
         if (inputValidation.isSafe === false) {
             throw new Error(inputValidation.reason);
         }
@@ -38,6 +44,10 @@ export class Orchestrator {
               }
             : await this.supervisor.decide(content);
 
+        emitEvidence(callbacks, {
+            kind: "route",
+            route: supervisorDecision.route,
+        });
         if (supervisorDecision.route === "DIRECT") {
             const text = supervisorDecision.directResponse || "";
             await this.agent.recordExchange?.(

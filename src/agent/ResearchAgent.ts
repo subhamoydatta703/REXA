@@ -8,6 +8,7 @@ import type { LLMResponse } from "../providers/LLMResponse";
 import type { ResearchMessage } from "./Message";
 import { assistantMessage, toolResultMessage } from "./Message";
 import type { RunCallbacks } from "./RunCallbacks";
+import { emitEvidence } from "./RunCallbacks";
 import { requestUrls } from "../orchestration/UrlIntent";
 import { researchContextMessage } from "./ResearchContext";
 import type { UrlReadResult } from "../tools/ReadUrlTool";
@@ -45,6 +46,11 @@ export class ResearchAgent {
             }),
             signal,
         );
+        emitEvidence(callbacks, {
+            kind: "guardrail",
+            component: "research input",
+            isSafe: validation.isSafe,
+        });
         if (!validation.isSafe) {
             throw new Error(validation.reason);
         }
@@ -76,11 +82,23 @@ export class ResearchAgent {
             );
             signal?.throwIfAborted();
             if (result.status === "rejected" || result.status === "blocked") {
+                emitEvidence(callbacks, {
+                    kind: "tool",
+                    source: "research",
+                    name: "read_url",
+                    result,
+                });
                 throw new Error(
                     `Research URL retrieval blocked: ${result.error}`,
                 );
             }
             evidence.push(result);
+            emitEvidence(callbacks, {
+                kind: "tool",
+                source: "research",
+                name: "read_url",
+                result,
+            });
             // This retrieval was initiated by the application, not the model.
             // Synthetic functionCall turns lack Gemini's required thought signatures.
             messages.push({
@@ -126,6 +144,11 @@ export class ResearchAgent {
                     signal,
                 );
                 signal?.throwIfAborted();
+                emitEvidence(callbacks, {
+                    kind: "guardrail",
+                    component: "research output",
+                    isSafe: final.isSafe,
+                });
                 return final.isSafe
                     ? response
                     : {
@@ -161,9 +184,17 @@ export class ResearchAgent {
                     }
                 }
                 const serialized = JSON.stringify(result) ?? "null";
-                messages.push(toolResultMessage(call, {
-                    sourceData: researchContextMessage(serialized),
-                }));
+                emitEvidence(callbacks, {
+                    kind: "tool",
+                    source: "research",
+                    name: call.name,
+                    result,
+                });
+                messages.push(
+                    toolResultMessage(call, {
+                        sourceData: researchContextMessage(serialized),
+                    }),
+                );
             }
             callbacks?.onStatus?.("researching...");
         }

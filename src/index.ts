@@ -28,6 +28,9 @@ import { ProviderSetup } from "./cli/ProviderSetup";
 import { parseProviderId } from "./providers/ProviderSettings";
 import { DEFAULT_GEMINI_MODEL } from "./providers/gemini/GeminiProtocol";
 import { ModelCatalog } from "./providers/ModelCatalog";
+import { EvaluationStore } from "./evaluation/EvaluationStore";
+import { EvaluationTracker } from "./evaluation/EvaluationTracker";
+import { EvaluationCommands } from "./evaluation/EvaluationCommands";
 
 import { password } from "@inquirer/prompts";
 import chalk from "chalk";
@@ -291,7 +294,8 @@ async function main() {
         await runOptionalApiSetup();
 
         // Initialize Agent
-        const llm = new GeminiProvider(apiKey);
+        const evaluations = new EvaluationTracker(new EvaluationStore());
+        const llm = evaluations.observeProvider(new GeminiProvider(apiKey));
         const toolRegistry = new ToolRegistry();
         setPermissions(await PermissionService.load());
         toolRegistry.registerTool(gitCommand);
@@ -335,8 +339,17 @@ async function main() {
         );
 
         const cli = new CLI(
-            orchestrator,
-            new LocalCommands(agent, editor.checkpoints),
+            {
+                run: (content, mode, callbacks) =>
+                    evaluations.run(orchestrator, content, mode, callbacks),
+            },
+            new LocalCommands(
+                agent,
+                editor.checkpoints,
+                undefined,
+                undefined,
+                new EvaluationCommands(evaluations),
+            ),
             initialMode,
         );
         try {

@@ -10,6 +10,7 @@ import { sandboxManager } from "../tools/ExecutionManager";
 import { MEMORY_SEARCH_RULES_PROMPT } from "../tools/MemorySearchRules";
 import type { AgentMode } from "./AgentMode";
 import type { RunCallbacks } from "./RunCallbacks";
+import { emitEvidence } from "./RunCallbacks";
 import type { LLMResponse } from "../providers/LLMResponse";
 import { researchContextMessage } from "./ResearchContext";
 import { ToolDispatcher } from "../tools/ToolDispatcher";
@@ -333,10 +334,9 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
         callbacks?.signal?.throwIfAborted();
         if (!this.registry.getTool(toolCall.name)) {
             this.messages.push(
-                toolResultMessage(
-                    toolCall,
-                    { result: `Tool ${toolCall.name} not found` },
-                ),
+                toolResultMessage(toolCall, {
+                    result: `Tool ${toolCall.name} not found`,
+                }),
             );
             return;
         }
@@ -368,6 +368,12 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
             this.registry.getTool(toolCall.name)!,
             result,
         );
+        emitEvidence(callbacks, {
+            kind: "tool",
+            source: "coding",
+            name: toolCall.name,
+            result,
+        });
         const duration = ((Date.now() - startTime) / 1000).toFixed(1) + "s";
         logger.debug(`Tool completed: ${toolCall.name}`, { duration });
         callbacks?.onStatus?.(agentStatus);
@@ -389,8 +395,19 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
         }
         const finalResponse =
             await this.outputGuardrails.outputValidation(response);
+        emitEvidence(callbacks, {
+            kind: "guardrail",
+            component: "coding output",
+            isSafe: finalResponse.isSafe,
+        });
         callbacks?.signal?.throwIfAborted();
         await this.verification?.confirmCurrent();
+        if (this.verification) {
+            emitEvidence(callbacks, {
+                kind: "verification",
+                evidence: this.verification.snapshot(),
+            });
+        }
         const verificationReport = this.verification
             ? `\n\n${this.verification.report()}`
             : "";
@@ -410,6 +427,12 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
             });
             await this.persist("complete", mode);
             callbacks?.onToken?.(response.text);
+            if (this.session) {
+                emitEvidence(callbacks, {
+                    kind: "session",
+                    id: this.session.id,
+                });
+            }
             return response;
         }
         const blocked =
@@ -418,6 +441,9 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                 "Response blocked by output validation.") + verificationReport;
         this.messages.push({ role: "assistant", content: blocked });
         await this.persist("complete", mode);
+        if (this.session) {
+            emitEvidence(callbacks, { kind: "session", id: this.session.id });
+        }
         return {
             role: "assistant",
             text: blocked,
@@ -473,6 +499,11 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
         };
 
         const inputValidation = await this.inputGuardrails.validate(context);
+        emitEvidence(callbacks, {
+            kind: "guardrail",
+            component: "coding input",
+            isSafe: inputValidation.isSafe,
+        });
         if (inputValidation.isSafe === false) {
             throw new Error(inputValidation.reason);
         }
@@ -552,6 +583,12 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
                                 },
                                 onToolResult: async (tool, result) => {
                                     workflow.observe(tool, result);
+                                    emitEvidence(callbacks, {
+                                        kind: "tool",
+                                        source: "debugging",
+                                        name: tool.name,
+                                        result,
+                                    });
                                     await this.persist("running", mode);
                                 },
                                 onMessage: (message) =>
@@ -622,6 +659,18 @@ Reply with JSON: { "isGood": boolean, "feedback": string }
             );
         } catch (error) {
             await this.persist("interrupted", mode);
+            if (this.verification) {
+                emitEvidence(callbacks, {
+                    kind: "verification",
+                    evidence: this.verification.snapshot(),
+                });
+            }
+            if (this.session) {
+                emitEvidence(callbacks, {
+                    kind: "session",
+                    id: this.session.id,
+                });
+            }
             throw error;
         } finally {
             await this.stopIdleSandbox();
